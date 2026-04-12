@@ -413,7 +413,7 @@ st.caption("7 facteurs vérifiés • Popularité TPC • Jouabilité Limitless 
 with st.sidebar:
     st.header("⚙️ Réglages")
 
-    # Bouton vert en haut
+    # CSS bouton vert
     st.markdown("""
         <style>
         div[data-testid="stButton"] > button {
@@ -433,8 +433,6 @@ with st.sidebar:
         }
         </style>
     """, unsafe_allow_html=True)
-    fetch_btn = st.button("🚀 Lancer l'analyse", disabled=not weights_valid, use_container_width=True)
-    st.divider()
 
     st.subheader("🎚️ Poids des facteurs")
     st.caption("Total doit être exactement **100%**.")
@@ -457,6 +455,9 @@ with st.sidebar:
     else:
         st.markdown(f"<span class='total-high'>❌ Total : {total_w}% — trop de {total_w-100}%</span>", unsafe_allow_html=True)
         weights_valid = False
+
+    st.divider()
+    fetch_btn = st.button("🚀 Lancer l'analyse", disabled=not weights_valid, use_container_width=True)
 
     st.divider()
     st.subheader("📐 Seuils")
