@@ -147,6 +147,7 @@ from meta_scores import get_meta_score
 from grading_ratio import get_grading_difficulty, get_gem_rate
 
 # ─── Constantes ───────────────────────────────────────────────
+# Pull rate de BASE par rareté (taux de drop de la CATÉGORIE dans un booster)
 RARITY_PULL = {
     "Special Illustration Rare":1/1440,"Hyper Rare":1/360,
     "Illustration Rare":1/144,"Ultra Rare":1/72,"Double Rare":1/48,
@@ -156,6 +157,76 @@ RARITY_PULL = {
     "Amazing Rare":1/40,"Radiant Rare":1/36,
     "Trainer Gallery Rare Holo":1/72,"Promo":1/1,
 }
+
+# ── SET METADATA : Dilution & Accessibilité ──────────────────────────────────
+# Données par set_id (source: Limitless, Bulbapedia, communauté)
+# Format: {set_id: (nb_SIR, nb_chase_total, type_prod, print_vol_mult)}
+#   nb_SIR         = nombre de SIR dans le set
+#   nb_chase_total = nb SIR + Hyper Rare + Gold dans le set
+#   type_prod      = "special" | "main" | "mini"
+#     special = pas de booster box (coffrets uniquement) → accessibilité réduite
+#     mini    = tirage limité
+#   print_vol_mult = multiplicateur volume impression (1.0=normal, 0.6=limité, 1.4=grand set)
+SET_META = {
+    # ── Scarlet & Violet ──────────────────────────────────────────────────
+    "sv8pt5": (20, 32, "special", 0.55),  # Prismatic Evolutions - coffrets uniquement, méga dilution
+    "sv8":    (15, 28, "main",    1.2),   # Surging Sparks
+    "sv7":    (15, 27, "main",    1.1),   # Stellar Crown
+    "sv6pt5": (12, 20, "mini",    0.7),   # Shrouded Fable - mini set
+    "sv6":    (13, 24, "main",    1.1),   # Twilight Masquerade
+    "sv5":    (16, 26, "main",    1.0),   # Temporal Forces
+    "sv4pt5": (12, 22, "mini",    0.65),  # Paldean Fates - shiny vault
+    "sv4":    (14, 25, "main",    1.0),   # Paradox Rift
+    "sv3pt5": (10, 18, "mini",    0.7),   # Pokemon 151 - spécial, très demandé
+    "sv3":    (14, 24, "main",    1.0),   # Obsidian Flames
+    "sv2":    (12, 20, "main",    0.9),   # Paldea Evolved
+    "sv1":    (10, 18, "main",    0.85),  # Scarlet & Violet Base
+    "svp":    (0,  0,  "promo",   1.0),   # SVP Promos
+    # ── Sword & Shield ────────────────────────────────────────────────────
+    "swsh12pt5": (30, 45, "special", 0.6), # Crown Zenith - spécial, dense
+    "swsh12":    (10, 18, "main",    1.0), # Silver Tempest
+    "swsh11":    (8,  15, "main",    1.0), # Lost Origin
+    "swsh10":    (8,  14, "main",    0.9), # Astral Radiance
+    "swsh9":     (7,  13, "main",    0.9), # Brilliant Stars
+    "swsh8":     (6,  11, "main",    0.85),# Fusion Strike
+    "swsh7":     (5,  10, "main",    0.8), # Evolving Skies
+    "swsh6":     (4,   8, "main",    0.8), # Chilling Reign
+    "swsh5":     (4,   8, "main",    0.8), # Battle Styles
+    "swsh45":    (0,  12, "mini",    0.6), # Shining Fates - spécial shiny
+    "swsh4":     (3,   7, "main",    0.75),# Vivid Voltage
+    "swsh35":    (0,   8, "special", 0.65),# Champion Path
+    "swsh3":     (3,   6, "main",    0.75),# Darkness Ablaze
+    "swsh2":     (3,   6, "main",    0.7), # Rebel Clash
+    "swsh1":     (3,   5, "main",    0.7), # Sword & Shield Base
+    "ssp":       (0,   0, "promo",   1.0), # Promo S&S
+    # Nouveau set Destined Rivals (sv9)
+    "sv9":       (14, 25, "main",    1.1),
+}
+
+# Accessibilité produit : coût relatif d'obtenir un booster (vs booster box standard)
+PROD_ACCESS = {
+    "special": 1.6,  # coffrets uniquement → packs 60-80% plus chers
+    "main":    1.0,  # booster box normal
+    "mini":    1.35, # mini set ou shiny vault
+    "promo":   0.5,  # promos gratuites
+}
+
+def get_set_meta(set_id: str):
+    """Retourne (nb_SIR, nb_chase, prod_type, print_vol) avec fallback."""
+    if set_id in SET_META:
+        return SET_META[set_id]
+    # Fallback par série
+    if set_id.startswith("sv"):  return (12, 20, "main", 1.0)
+    if set_id.startswith("swsh"):return (5,  10, "main", 0.9)
+    return (8, 15, "main", 1.0)
+
+def specific_pull_rate(base_pull: float, nb_chase: int) -> float:
+    """
+    Rs = taux_drop_categorie / nb_cartes_dans_categorie
+    Ex: SIR Prismatic = (1/1440) / 20 = 1/28800 → hyper-rare individuellement
+    """
+    if nb_chase <= 0: return base_pull
+    return base_pull / max(nb_chase, 1)
 
 ARTIST_SCORES = {
     "mika pikazo":10.0,"tetsu kayama":9.5,"akira komayama":9.5,
@@ -263,12 +334,20 @@ def fetch_data(max_cards=400):
             num = c.get("number", "")
             rel = c.get("set", {}).get("releaseDate", "")
             hs, hl = hype(prices)
+            nb_sir, nb_chase, prod_type, print_vol = get_set_meta(sid)
+            base_pull = RARITY_PULL.get(rar, 1/20)
+            rs = specific_pull_rate(base_pull, nb_chase)
             rows.append({
                 "id": cid, "name": nm,
                 "set": c.get("set", {}).get("name", "?"),
                 "series": c.get("set", {}).get("series", "?"),
                 "release_date": rel, "rarity": rar, "artist": art,
                 "f_scarcity": RARITY_PULL.get(rar, 1/20),
+                "f_specific_pull": rs,           # Rs : pull rate individuel
+                "f_chase_density": nb_chase,     # Dset : nb chase cards du set
+                "f_accessibility": PROD_ACCESS.get(prod_type, 1.0),  # Aprod
+                "f_print_vol": print_vol,        # Vprint
+                "prod_type": prod_type,
                 "f_tier": get_popularity_score(nm),
                 "f_artist": get_artist_score(art),
                 "f_meta": get_meta_score(sid, num),
@@ -290,65 +369,103 @@ def fetch_data(max_cards=400):
 
 def run_model(df, w, gt, ot):
     """
-    Approche score-relatif : chaque carte est jugée individuellement.
+    Moteur v4 — Score-relatif intra-rareté avec variables de dilution.
+
+    Variables de dilution injectées :
+      Rs  (f_specific_pull)  : pull rate individuel = taux_categ / nb_chase_set
+      Dset (f_chase_density) : densité des chase cards dans le set
+      Aprod (f_accessibility): coefficient produit (coffret vs booster box)
+      Vprint (f_print_vol)   : volume d'impression estimé
 
     Logique :
-    1. On calcule un score composite (0-1) basé sur les 7 facteurs pondérés.
-    2. On normalise le score PAR RARETÉ — chaque carte est comparée aux autres
-       cartes de même rareté, pas à la totalité du marché.
-    3. La Fair Value = prix_réel * multiplicateur_relatif au score de rareté.
-       - Score au 50e percentile de sa rareté → Vt = prix marché (0% d'écart)
-       - Score élevé → Vt > prix (potentiellement sous-évaluée)
-       - Score faible → Vt < prix (potentiellement surévaluée)
-    4. Le multiplicateur est plafonné à ×2.5 / ×0.4 pour rester réaliste.
+    1. Score composite pondéré par l'utilisateur sur les 7 facteurs de base.
+    2. Multiplicateur de dilution D = f(Rs, Dset, Aprod, Vprint) — boost exponentiel
+       pour les cartes issues de sets denses/spéciaux avec faible print volume.
+    3. Score final = score_base * D (normalisé intra-rareté en percentile).
+    4. Fair Value = prix_marché * mult_percentile (pas de plafond — la réalité n'en a pas).
     """
     df = df.copy()
     df["f_scarcity_inv"] = -np.log(df["f_scarcity"])
+
     sc = MinMaxScaler()
     for c in FCOLS:
         df[f"{c}_n"] = sc.fit_transform(df[[c]])
     wa = np.array([w[c] for c in FCOLS])
-    df["score"] = df[[f"{c}_n" for c in FCOLS]].values.dot(wa) / (wa.sum() or 1)
+    df["score_base"] = df[[f"{c}_n" for c in FCOLS]].values.dot(wa) / (wa.sum() or 1)
 
-    # ── Score normalisé par rareté (percentile rank) ──
-    # Chaque carte reçoit un rang 0-1 parmi les cartes de même rareté
-    df["score_rank"] = df.groupby("rarity")["score"].rank(pct=True)
+    # ── Dilution Multiplier D ─────────────────────────────────────────────
+    # Rs : plus la carte est rare individuellement, plus D monte
+    # On normalise Rs en log pour éviter l'écrasement (1/28800 vs 1/1440)
+    df["_log_rs"] = -np.log(df["f_specific_pull"].clip(lower=1e-8))
+    rs_min, rs_max = df["_log_rs"].min(), df["_log_rs"].max()
+    df["_rs_n"] = (df["_log_rs"] - rs_min) / (rs_max - rs_min + 1e-9)  # 0-1
 
-    # ── Multiplicateur relatif centré sur 1.0 ──
-    # score_rank = 0.5 → mult = 1.0 (prix juste par définition)
-    # score_rank = 1.0 → mult = max_mult (très bonne valeur)
-    # score_rank = 0.0 → mult = min_mult (surévaluée)
-    max_mult = 2.0   # max +100%
-    min_mult = 0.45  # max -55%
-    # Interpolation linéaire : rank 0→min_mult, rank 0.5→1.0, rank 1→max_mult
-    df["mult"] = df["score_rank"].apply(
-        lambda r: min_mult + (1.0 - min_mult) * (r / 0.5) if r <= 0.5
-                  else 1.0 + (max_mult - 1.0) * ((r - 0.5) / 0.5)
+    # Dset : densité inversée normalisée (plus de chase cards = plus dilué = D monte)
+    df["_dset_n"] = MinMaxScaler().fit_transform(df[["f_chase_density"]])
+
+    # Aprod : déjà entre 0.5 et 1.6
+    df["_aprod_n"] = (df["f_accessibility"] - 0.5) / 1.1  # 0-1
+
+    # Vprint : inversé (petit volume = plus rare)
+    df["_vprint_n"] = 1.0 - MinMaxScaler().fit_transform(df[["f_print_vol"]])
+
+    # D = moyenne pondérée des 4 composantes → rescalé entre 0.6 et 2.5
+    # Pondérations : Rs a le plus grand impact (exponentiel comme demandé)
+    d_raw = (
+        0.45 * df["_rs_n"] +
+        0.25 * df["_dset_n"] +
+        0.20 * df["_aprod_n"] +
+        0.10 * df["_vprint_n"]
     )
+    # Exponentiel sur Rs : D = d_raw^0.7 rescalé → plage 0.6 – 2.8
+    df["D_mult"] = 0.6 + (d_raw ** 0.7) * 2.2
 
-    # ── Fair Value individuelle ──
-    df["Vt"] = (df["market_price"] * df["mult"]).round(2)
-    df["ecart"] = ((df["Vt"] - df["market_price"]) / df["market_price"] * 100).round(1)
+    # ── Score final = score_base * D ─────────────────────────────────────
+    df["score_final"] = df["score_base"] * df["D_mult"]
 
-    # ── Signal ──
+    # ── Percentile rank INTRA-RARETÉ du score final ───────────────────────
+    # Chaque carte comparée uniquement à ses pairs de même rareté
+    df["score_rank"] = df.groupby("rarity")["score_final"].rank(pct=True)
+
+    # ── Multiplicateur de Fair Value (sans plafond — la réalité n'en a pas) ──
+    # rank 0.0 → 0.25x (très surévaluée vs ses pairs)
+    # rank 0.5 → 1.0x  (prix juste = médiane de sa rareté)
+    # rank 1.0 → 4.0x  (monstre de valeur comme Umbreon Prismatic)
+    # Courbe non-linéaire : explosion exponentielle au-delà du 85e centile
+    def rank_to_mult(r):
+        if r <= 0.5:
+            # Linéaire 0.25 → 1.0
+            return 0.25 + (1.0 - 0.25) * (r / 0.5)
+        else:
+            # Exponentiel 1.0 → ∞ (pas de plafond)
+            # À rank=0.75 → ~1.8x, rank=0.90 → ~2.8x, rank=0.99 → ~5x+
+            t = (r - 0.5) / 0.5  # 0→1
+            return 1.0 + (np.expm1(t * 1.8))  # e^(t*1.8)-1 + 1
+
+    df["mult"] = df["score_rank"].apply(rank_to_mult)
+    df["Vt"]   = (df["market_price"] * df["mult"]).round(2)
+    df["ecart"]= ((df["Vt"] - df["market_price"]) / df["market_price"] * 100).round(1)
+
+    # ── Signal (sans plafond d'écart) ────────────────────────────────────
     def sig(r):
         if r["ecart"] > gt * 100:  return "gem"
         if r["ecart"] < -ot * 100: return "over"
         return "fair"
     df["Signal"] = df.apply(sig, axis=1)
 
-    # R² approximatif (score vs log-price par rareté)
+    # ── R² global (informatif) ────────────────────────────────────────────
     try:
         from sklearn.linear_model import Ridge as _R
         _m = _R(alpha=1.0)
-        _m.fit(df[["score"]], np.log1p(df["market_price"]))
-        yp = _m.predict(df[["score"]])
+        _m.fit(df[["score_final"]], np.log1p(df["market_price"]))
+        yp = _m.predict(df[["score_final"]])
         y  = np.log1p(df["market_price"].values)
-        r2 = max(0, 1 - np.sum((y-yp)**2) / np.sum((y-np.mean(y))**2))
+        r2 = max(0, 1 - np.sum((y - yp)**2) / np.sum((y - np.mean(y))**2))
     except:
         r2 = 0.0
 
-    df.drop(columns=["score_rank","mult"], inplace=True)
+    df.drop(columns=["_log_rs","_rs_n","_dset_n","_aprod_n","_vprint_n",
+                      "score_base","D_mult","score_final","score_rank","mult"], inplace=True)
     return df, round(r2, 3)
 
 def card_html(c, sig):
