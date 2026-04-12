@@ -376,4 +376,4 @@ st.subheader("📥 Exporter les résultats")
 export_cols = [c for c in ["name", "set", "rarity", "market_price", "Vt", "Alpha_pct", "Signal", "tcgplayer_url"] if c in df.columns]
 csv_buf = io.StringIO()
 df[export_cols].sort_values("Alpha_pct", ascending=False).to_csv(csv_buf, index=False)
-st.download_button("⬇️ Télécharger le rapport complet (CSV)", csv_buf.getvalue()
+st.download_button("⬇️ Télécharger le rapport complet (CSV)", csv_buf.getvalue(), "fair_value_report.csv", "text/csv")
