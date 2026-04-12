@@ -40,6 +40,7 @@ st.markdown("""
 
 from pokemon_popularity import get_popularity_score
 from meta_scores import get_meta_score
+from grading_ratio import get_grading_difficulty
 
 # ─────────────────────────────────────────────
 # CONSTANTES
@@ -167,14 +168,10 @@ def fetch_live_data(query: str, max_cards: int = 400, api_key: str = "") -> pd.D
                         else:             hype = 3.5
                     break
 
-            slab_difficulty = {
-                "Special Illustration Rare": 8.5,
-                "Illustration Rare":         7.0,
-                "Hyper Rare":                6.0,
-                "Ultra Rare":                5.0,
-                "Double Rare":               4.0,
-            }
-            psa10 = slab_difficulty.get(rarity, 4.0)
+            # Score de difficulté de grading basé sur gem rates réels PSA
+            # Sources: GemRate 2025, misprint.com pop report analysis
+            # Score élevé = PSA 10 difficile à obtenir = prime grade plus élevée
+            psa10 = get_grading_difficulty(rarity)
 
             all_rows.append({
                 "name":          card_name,
