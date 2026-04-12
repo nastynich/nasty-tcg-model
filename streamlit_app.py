@@ -33,83 +33,12 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# POPULARITE — Sondage officiel The Pokemon Company
-# Source: thomasgamedocs.com (compilation officielle TPC)
-# Score 1-10 calcule depuis le % d'approbation
+# POPULARITE — AV Club "The 150 Best Pokemon" (Nov 2024)
+# Source: https://www.avclub.com/the-top-100-pokemon-of-all-time
+# Score 1-10: Rank #1 → 10.0 | Rank #150 → 4.0 | Hors liste → 2.0
 # ─────────────────────────────────────────────
 
-RAW_POPULARITY = {
-    "umbreon": 79.5, "mimikyu": 79.2, "sylveon": 78.0, "eevee": 76.8,
-    "vaporeon": 76.8, "rayquaza": 76.4, "lucario": 76.3, "chandelure": 76.3,
-    "mew": 76.1, "espeon": 75.3, "lugia": 75.2, "leafeon": 75.1,
-    "mudkip": 75.1, "kyogre": 74.9, "lapras": 74.7, "mewtwo": 74.7,
-    "gengar": 74.6, "luxray": 74.6, "rowlet": 74.2, "cyndaquil": 74.1,
-    "gardevoir": 73.9, "giratina": 73.9, "jolteon": 73.8, "decidueye": 73.8,
-    "dragonite": 73.3, "lunala": 73.2, "suicune": 72.9, "bulbasaur": 72.8,
-    "piplup": 72.7, "flygon": 72.6, "ninetales": 72.6, "garchomp": 72.6,
-    "darkrai": 72.6, "zoroark": 72.5, "dragonair": 72.4, "empoleon": 72.3,
-    "glaceon": 72.1, "blastoise": 72.1, "greninja": 72.0, "wooper": 72.0,
-    "shaymin": 71.8, "zorua": 71.8, "scizor": 71.7, "typhlosion": 71.5,
-    "dialga": 71.4, "ho-oh": 71.3, "jirachi": 71.1, "raichu": 71.1,
-    "xerneas": 71.0, "ampharos": 71.0, "reshiram": 71.0, "arceus": 71.0,
-    "swampert": 70.9, "torterra": 70.8, "squirtle": 70.7, "absol": 70.6,
-    "sprigatito": 70.6, "victini": 70.5, "flareon": 70.4, "arcanine": 70.3,
-    "ceruledge": 70.2, "blaziken": 70.2, "litten": 70.1, "pikachu": 70.1,
-    "snorlax": 70.1, "gyarados": 69.9, "milotic": 69.9, "metagross": 69.6,
-    "venusaur": 69.5, "articuno": 69.5, "latias": 69.4, "celebi": 69.3,
-    "altaria": 69.3, "oshawott": 69.1, "rotom": 69.1, "gallade": 69.1,
-    "zekrom": 69.0, "ditto": 68.8, "lycanroc": 68.8, "dratini": 68.6,
-    "corviknight": 68.6, "dragapult": 68.6, "salamence": 68.5, "mismagius": 68.5,
-    "serperior": 68.5, "riolu": 68.2, "vulpix": 68.2, "goodra": 68.2,
-    "furret": 68.1, "quagsire": 68.1, "porygon": 68.0, "solgaleo": 68.0,
-    "meowscarada": 67.9, "primarina": 67.8, "sceptile": 67.7, "clodsire": 67.7,
-    "marshadow": 67.6, "tyranitar": 67.6, "charizard": 67.5, "totodile": 67.3,
-    "groudon": 67.3, "rockruff": 67.1, "haunter": 66.8, "fennekin": 66.7,
-    "hydreigon": 66.3, "noivern": 66.2, "zapdos": 66.1, "snivy": 65.9,
-    "turtwig": 65.7, "litwick": 65.7, "torchic": 65.6, "samurott": 65.5,
-    "latios": 65.5, "deoxys": 65.5, "froslass": 65.5, "shinx": 65.3,
-    "entei": 65.2, "togepi": 65.2, "raikou": 65.2, "charmander": 65.0,
-    "weavile": 65.0, "volcarona": 64.9, "aegislash": 64.9, "breloom": 64.7,
-    "trevenant": 64.5, "treecko": 64.5, "fuecoco": 64.5, "gliscor": 64.4,
-    "skeledirge": 64.4, "tinkaton": 64.4, "krookodile": 64.3, "togekiss": 63.4,
-    "alakazam": 63.4, "miraidon": 63.0, "iron valiant": 63.0, "palkia": 63.0,
-    "aggron": 63.0, "crobat": 62.8, "mawile": 62.4, "feraligatr": 62.2,
-    "incineroar": 61.7, "cinderace": 61.3, "azumarill": 61.6, "gible": 61.4,
-    "nidoking": 61.3, "wooloo": 61.0, "whimsicott": 61.0, "snom": 61.0,
-    "koraidon": 60.9, "joltik": 60.9, "zacian": 60.6, "staraptor": 60.6,
-    "meowth": 60.5, "sneasel": 60.5, "houndoom": 60.3, "excadrill": 59.7,
-    "beedrill": 59.5, "infernape": 59.4, "hawlucha": 59.2, "zeraora": 59.1,
-    "regigigas": 58.9, "flutter mane": 58.9, "chien-pao": 58.5, "toxtricity": 58.5,
-    "bisharp": 58.5, "tapu koko": 57.7, "annihilape": 57.2, "magnezone": 57.2,
-    "tapu lele": 52.2, "tapu fini": 54.2, "tapu bulu": 51.0,
-    "iron hands": 48.0, "iron moth": 53.8, "roaring moon": 54.7,
-    "great tusk": 52.9, "chi-yu": 52.4, "gholdengo": 49.0,
-    "palafin": 48.0, "ursaluna": 52.2, "kingambit": 50.2,
-    "flutter mane": 58.9, "iron valiant": 63.0,
-    "zamazenta": 56.0, "eternatus": 50.6, "calyrex": 48.0,
-    "spectrier": 53.6, "glastrier": 46.0,
-    "inteleon": 55.7, "rillaboom": 49.9,
-    "ogerpon": 56.2, "terapagos": 47.0, "pecharunt": 46.0,
-}
-
-_MIN_PCT = 40.0
-_MAX_PCT = 79.5
-
-def _pct_to_score(pct: float) -> float:
-    return round(max(1.0, min(10.0, (pct - _MIN_PCT) / (_MAX_PCT - _MIN_PCT) * 9 + 1)), 2)
-
-POPULARITY_SCORES = {name: _pct_to_score(pct) for name, pct in RAW_POPULARITY.items()}
-
-def get_popularity_score(card_name: str) -> float:
-    """Score 1-10 base sur sondage officiel TPC. Default 3.0 si inconnu (Trainer/bulk)."""
-    name_lower = card_name.lower()
-    if name_lower in POPULARITY_SCORES:
-        return POPULARITY_SCORES[name_lower]
-    for poke_name, score in POPULARITY_SCORES.items():
-        if poke_name in name_lower:
-            return score
-    return 3.0
-
+from pokemon_popularity import get_popularity_score
 
 # ─────────────────────────────────────────────
 # CONSTANTES
