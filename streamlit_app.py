@@ -342,7 +342,7 @@ DEFAULTS = {"tier":35,"scarcity":25,"psa10":10,"meta":10,"hype":8,"artist":7,"li
 FCOLS = ["f_scarcity_inv","f_tier","f_artist","f_meta","f_hype","f_psa10","f_lifecycle"]
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_data(max_cards=400, _v=6):  # bump _v pour invalider cache
+def fetch_data(max_cards=9999, _v=7):  # _v=7 : fetch complet sans limite
     rows, seen, page = [], set(), 1
     while len(rows) < max_cards:
         size = min(250, max_cards - len(rows))
@@ -623,8 +623,8 @@ if "df" not in st.session_state:
     st.session_state.df = pd.DataFrame()
 
 if fetch_btn and ok:
-    with st.spinner("Chargement... ~20 sec"):
-        fetched = fetch_data(400, _v=6)
+    with st.spinner("Chargement... ~45 sec (1275 cartes)"):
+        fetched = fetch_data(_v=7)
     if fetched.empty:
         st.error("Aucune carte. Vérifie ta connexion.")
     else:
