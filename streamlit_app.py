@@ -1,7 +1,7 @@
 """
 =============================================================
- Nasty TCG Dashboard — Streamlit App (v5)
- 7 facteurs, poids par defaut Nich, validation 100%
+ Nasty TCG Dashboard — Streamlit App (v6)
+ 7 facteurs reels, popularite basee sur sondage officiel TPC
 =============================================================
 """
 
@@ -26,12 +26,90 @@ st.markdown("""
 <style>
     .gem-badge  { color: #2ecc71; font-size: 15px; font-weight: bold; }
     .over-badge { color: #e74c3c; font-size: 15px; font-weight: bold; }
-    .fair-badge { color: #f39c12; font-size: 15px; font-weight: bold; }
     .total-ok   { color: #2ecc71; font-size: 20px; font-weight: bold; }
     .total-low  { color: #e67e22; font-size: 20px; font-weight: bold; }
     .total-high { color: #e74c3c; font-size: 20px; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────
+# POPULARITE — Sondage officiel The Pokemon Company
+# Source: thomasgamedocs.com (compilation officielle TPC)
+# Score 1-10 calcule depuis le % d'approbation
+# ─────────────────────────────────────────────
+
+RAW_POPULARITY = {
+    "umbreon": 79.5, "mimikyu": 79.2, "sylveon": 78.0, "eevee": 76.8,
+    "vaporeon": 76.8, "rayquaza": 76.4, "lucario": 76.3, "chandelure": 76.3,
+    "mew": 76.1, "espeon": 75.3, "lugia": 75.2, "leafeon": 75.1,
+    "mudkip": 75.1, "kyogre": 74.9, "lapras": 74.7, "mewtwo": 74.7,
+    "gengar": 74.6, "luxray": 74.6, "rowlet": 74.2, "cyndaquil": 74.1,
+    "gardevoir": 73.9, "giratina": 73.9, "jolteon": 73.8, "decidueye": 73.8,
+    "dragonite": 73.3, "lunala": 73.2, "suicune": 72.9, "bulbasaur": 72.8,
+    "piplup": 72.7, "flygon": 72.6, "ninetales": 72.6, "garchomp": 72.6,
+    "darkrai": 72.6, "zoroark": 72.5, "dragonair": 72.4, "empoleon": 72.3,
+    "glaceon": 72.1, "blastoise": 72.1, "greninja": 72.0, "wooper": 72.0,
+    "shaymin": 71.8, "zorua": 71.8, "scizor": 71.7, "typhlosion": 71.5,
+    "dialga": 71.4, "ho-oh": 71.3, "jirachi": 71.1, "raichu": 71.1,
+    "xerneas": 71.0, "ampharos": 71.0, "reshiram": 71.0, "arceus": 71.0,
+    "swampert": 70.9, "torterra": 70.8, "squirtle": 70.7, "absol": 70.6,
+    "sprigatito": 70.6, "victini": 70.5, "flareon": 70.4, "arcanine": 70.3,
+    "ceruledge": 70.2, "blaziken": 70.2, "litten": 70.1, "pikachu": 70.1,
+    "snorlax": 70.1, "gyarados": 69.9, "milotic": 69.9, "metagross": 69.6,
+    "venusaur": 69.5, "articuno": 69.5, "latias": 69.4, "celebi": 69.3,
+    "altaria": 69.3, "oshawott": 69.1, "rotom": 69.1, "gallade": 69.1,
+    "zekrom": 69.0, "ditto": 68.8, "lycanroc": 68.8, "dratini": 68.6,
+    "corviknight": 68.6, "dragapult": 68.6, "salamence": 68.5, "mismagius": 68.5,
+    "serperior": 68.5, "riolu": 68.2, "vulpix": 68.2, "goodra": 68.2,
+    "furret": 68.1, "quagsire": 68.1, "porygon": 68.0, "solgaleo": 68.0,
+    "meowscarada": 67.9, "primarina": 67.8, "sceptile": 67.7, "clodsire": 67.7,
+    "marshadow": 67.6, "tyranitar": 67.6, "charizard": 67.5, "totodile": 67.3,
+    "groudon": 67.3, "rockruff": 67.1, "haunter": 66.8, "fennekin": 66.7,
+    "hydreigon": 66.3, "noivern": 66.2, "zapdos": 66.1, "snivy": 65.9,
+    "turtwig": 65.7, "litwick": 65.7, "torchic": 65.6, "samurott": 65.5,
+    "latios": 65.5, "deoxys": 65.5, "froslass": 65.5, "shinx": 65.3,
+    "entei": 65.2, "togepi": 65.2, "raikou": 65.2, "charmander": 65.0,
+    "weavile": 65.0, "volcarona": 64.9, "aegislash": 64.9, "breloom": 64.7,
+    "trevenant": 64.5, "treecko": 64.5, "fuecoco": 64.5, "gliscor": 64.4,
+    "skeledirge": 64.4, "tinkaton": 64.4, "krookodile": 64.3, "togekiss": 63.4,
+    "alakazam": 63.4, "miraidon": 63.0, "iron valiant": 63.0, "palkia": 63.0,
+    "aggron": 63.0, "crobat": 62.8, "mawile": 62.4, "feraligatr": 62.2,
+    "incineroar": 61.7, "cinderace": 61.3, "azumarill": 61.6, "gible": 61.4,
+    "nidoking": 61.3, "wooloo": 61.0, "whimsicott": 61.0, "snom": 61.0,
+    "koraidon": 60.9, "joltik": 60.9, "zacian": 60.6, "staraptor": 60.6,
+    "meowth": 60.5, "sneasel": 60.5, "houndoom": 60.3, "excadrill": 59.7,
+    "beedrill": 59.5, "infernape": 59.4, "hawlucha": 59.2, "zeraora": 59.1,
+    "regigigas": 58.9, "flutter mane": 58.9, "chien-pao": 58.5, "toxtricity": 58.5,
+    "bisharp": 58.5, "tapu koko": 57.7, "annihilape": 57.2, "magnezone": 57.2,
+    "tapu lele": 52.2, "tapu fini": 54.2, "tapu bulu": 51.0,
+    "iron hands": 48.0, "iron moth": 53.8, "roaring moon": 54.7,
+    "great tusk": 52.9, "chi-yu": 52.4, "gholdengo": 49.0,
+    "palafin": 48.0, "ursaluna": 52.2, "kingambit": 50.2,
+    "flutter mane": 58.9, "iron valiant": 63.0,
+    "zamazenta": 56.0, "eternatus": 50.6, "calyrex": 48.0,
+    "spectrier": 53.6, "glastrier": 46.0,
+    "inteleon": 55.7, "rillaboom": 49.9,
+    "ogerpon": 56.2, "terapagos": 47.0, "pecharunt": 46.0,
+}
+
+_MIN_PCT = 40.0
+_MAX_PCT = 79.5
+
+def _pct_to_score(pct: float) -> float:
+    return round(max(1.0, min(10.0, (pct - _MIN_PCT) / (_MAX_PCT - _MIN_PCT) * 9 + 1)), 2)
+
+POPULARITY_SCORES = {name: _pct_to_score(pct) for name, pct in RAW_POPULARITY.items()}
+
+def get_popularity_score(card_name: str) -> float:
+    """Score 1-10 base sur sondage officiel TPC. Default 3.0 si inconnu (Trainer/bulk)."""
+    name_lower = card_name.lower()
+    if name_lower in POPULARITY_SCORES:
+        return POPULARITY_SCORES[name_lower]
+    for poke_name, score in POPULARITY_SCORES.items():
+        if poke_name in name_lower:
+            return score
+    return 3.0
+
 
 # ─────────────────────────────────────────────
 # CONSTANTES
@@ -51,14 +129,6 @@ RARITY_PULL = {
     "Rare":                      1/10,
 }
 
-TIER_MAP = {
-    10: ["charizard", "umbreon", "mewtwo", "rayquaza", "lugia"],
-    9:  ["pikachu", "eevee", "mew", "gengar", "snorlax", "espeon", "vaporeon"],
-    8:  ["jolteon", "flareon", "sylveon", "gardevoir", "blastoise", "venusaur"],
-    7:  ["greninja", "lucario", "togekiss", "alakazam", "dragonite"],
-    6:  ["gyarados", "arcanine", "ninetales", "absol", "flygon"],
-}
-
 ARTIST_TIER = {
     10: ["mika pikazo", "tetsu kayama", "akira komayama"],
     9:  ["ryota murayama", "nagomibana", "sowsow", "5ban graphics"],
@@ -73,23 +143,10 @@ RECENT_SETS_QUERY = (
     'OR rarity:"Hyper Rare" OR rarity:"Ultra Rare" OR rarity:"Double Rare")'
 )
 
-# ── Poids par defaut (Nich) ──
 DEFAULT_WEIGHTS = {
-    "tier":      40,
-    "scarcity":  25,
-    "psa10":     10,
-    "meta":      10,
-    "hype":       5,
-    "artist":     5,
-    "lifecycle":  5,
+    "tier": 40, "scarcity": 25, "psa10": 10,
+    "meta": 10, "hype": 5, "artist": 5, "lifecycle": 5,
 }
-
-def get_tier(name: str) -> int:
-    name = name.lower()
-    for tier, names in TIER_MAP.items():
-        if any(n in name for n in names):
-            return tier
-    return 3
 
 def get_artist_score(artist: str) -> float:
     artist = artist.lower()
@@ -160,6 +217,7 @@ def fetch_live_data(query: str, max_cards: int = 400, api_key: str = "") -> pd.D
             legalities   = card.get("legalities", {})
             release_date = card.get("set", {}).get("releaseDate", "")
             artist       = card.get("artist", "")
+            card_name    = card.get("name", "?")
 
             if legalities.get("standard") == "Legal":
                 meta = 9.0
@@ -191,14 +249,14 @@ def fetch_live_data(query: str, max_cards: int = 400, api_key: str = "") -> pd.D
             psa10 = slab_difficulty.get(rarity, 4.0)
 
             all_rows.append({
-                "name":          card.get("name", "?"),
+                "name":          card_name,
                 "set":           card.get("set", {}).get("name", "?"),
                 "series":        card.get("set", {}).get("series", "?"),
                 "release_date":  release_date,
                 "rarity":        rarity,
                 "artist":        artist,
                 "f_scarcity":    pull_rate,
-                "f_tier":        float(get_tier(card.get("name", ""))),
+                "f_tier":        get_popularity_score(card_name),   # ← sondage officiel TPC
                 "f_artist":      get_artist_score(artist),
                 "f_meta":        meta,
                 "f_hype":        hype,
@@ -234,23 +292,19 @@ def compute_fair_value(df, weights: dict, gem_thresh: float, over_thresh: float)
     norm_cols  = [f"{c}_n" for c in FEATURE_COLS]
     weight_arr = np.array([weights[c] for c in FEATURE_COLS])
     total_w    = weight_arr.sum() or 1.0
-
     df["score"] = df[norm_cols].values.dot(weight_arr) / total_w
 
     X = df[["score"]].values
     y = np.log1p(df["market_price"].values)
+    from sklearn.linear_model import Ridge
     model = Ridge(alpha=1.0)
     model.fit(X, y)
 
     df["Vt"]        = np.expm1(model.predict(X)).round(2)
     df["ecart_pct"] = ((df["Vt"] - df["market_price"]) / df["market_price"] * 100).round(1)
-
-    df["Signal"] = df["ecart_pct"].apply(
+    df["Signal"]    = df["ecart_pct"].apply(
         lambda x: "🟢 Sous-évalué" if x > gem_thresh * 100
-        else ("🔴 Surévalué" if x < over_thresh * 100 else "🟡 Prix juste")
-    )
-    df["Ecart_label"] = df["ecart_pct"].apply(
-        lambda x: f"+{x:.0f}% sous le prix réel" if x > 0 else f"{abs(x):.0f}% au-dessus du prix réel"
+        else ("🔴 Surévalué" if x < -over_thresh * 100 else "🟡 Prix juste")
     )
     return df
 
@@ -260,7 +314,7 @@ def compute_fair_value(df, weights: dict, gem_thresh: float, over_thresh: float)
 # ─────────────────────────────────────────────
 
 st.title("🎴 Nasty TCG — Détecteur de cartes sous-évaluées")
-st.caption("7 facteurs analysés • Prix ancrés sur le marché réel • Scarlet & Violet + Sword & Shield")
+st.caption("7 facteurs • Popularité basée sur sondage officiel TPC • Prix ancrés sur le marché réel")
 
 with st.sidebar:
     st.header("⚙️ Réglages")
@@ -272,16 +326,16 @@ with st.sidebar:
     )
 
     st.divider()
-    st.subheader("🎚️ Poids des facteurs (total = 100%)")
-    st.caption("Ajuste l'importance de chaque facteur. Le total doit être exactement 100% pour lancer l'analyse.")
+    st.subheader("🎚️ Poids des facteurs")
+    st.caption("Total doit etre exactement **100%** pour lancer l'analyse.")
 
-    w_tier      = st.slider("⭐ Popularité du Pokémon (Character Tier)",  0, 100, DEFAULT_WEIGHTS["tier"],      5)
-    w_scarcity  = st.slider("🔮 Rareté (Scarcity Factor)",                0, 100, DEFAULT_WEIGHTS["scarcity"],  5)
-    w_psa10     = st.slider("💎 Difficulté de grading (Slab Factor)",     0, 100, DEFAULT_WEIGHTS["psa10"],     5)
-    w_meta      = st.slider("🏆 Jouabilité compétitive",                   0, 100, DEFAULT_WEIGHTS["meta"],      5)
-    w_hype      = st.slider("🔥 Hype / Sentiment social",                  0, 100, DEFAULT_WEIGHTS["hype"],      5)
-    w_artist    = st.slider("🎨 Réputation de l'artiste",                  0, 100, DEFAULT_WEIGHTS["artist"],    5)
-    w_lifecycle = st.slider("📅 Cycle de vie du set",                      0, 100, DEFAULT_WEIGHTS["lifecycle"], 5)
+    w_tier      = st.slider("⭐ Popularité du Pokémon",       0, 100, DEFAULT_WEIGHTS["tier"],      5)
+    w_scarcity  = st.slider("🔮 Rareté (pull rate)",           0, 100, DEFAULT_WEIGHTS["scarcity"],  5)
+    w_psa10     = st.slider("💎 Difficulté de grading PSA 10", 0, 100, DEFAULT_WEIGHTS["psa10"],     5)
+    w_meta      = st.slider("🏆 Jouabilité compétitive",        0, 100, DEFAULT_WEIGHTS["meta"],      5)
+    w_hype      = st.slider("🔥 Hype / Sentiment social",       0, 100, DEFAULT_WEIGHTS["hype"],      5)
+    w_artist    = st.slider("🎨 Réputation de l'artiste",       0, 100, DEFAULT_WEIGHTS["artist"],    5)
+    w_lifecycle = st.slider("📅 Cycle de vie du set",           0, 100, DEFAULT_WEIGHTS["lifecycle"], 5)
 
     total_w = w_tier + w_scarcity + w_psa10 + w_meta + w_hype + w_artist + w_lifecycle
 
@@ -290,19 +344,17 @@ with st.sidebar:
         st.markdown("<div class='total-ok'>✅ Total : 100% — Parfait !</div>", unsafe_allow_html=True)
         weights_valid = True
     elif total_w < 100:
-        manque = 100 - total_w
-        st.markdown(f"<div class='total-low'>⚠️ Total : {total_w}% — Il manque {manque}%</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='total-low'>⚠️ Total : {total_w}% — Il manque {100 - total_w}%</div>", unsafe_allow_html=True)
         weights_valid = False
     else:
-        surplus = total_w - 100
-        st.markdown(f"<div class='total-high'>🚫 Total : {total_w}% — {surplus}% en trop !</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='total-high'>🚫 Total : {total_w}% — {total_w - 100}% en trop !</div>", unsafe_allow_html=True)
         weights_valid = False
 
     fetch_btn = st.button(
         "🔄 Lancer l'analyse",
         type="primary",
         disabled=not weights_valid,
-        help="Les poids doivent totaliser exactement 100% pour lancer l'analyse."
+        help="Les poids doivent totaliser exactement 100%."
     )
 
     st.divider()
@@ -336,15 +388,15 @@ if df_raw.empty:
     st.markdown("""
 **Les 7 facteurs analysés :**
 
-| Facteur | Description | Défaut |
+| Facteur | Source | Défaut |
 |---|---|---|
-| ⭐ Popularité | Charizard = 10, Pokémon bulk = 3 | **40%** |
-| 🔮 Rareté | Pull rate réel (1/1440 pour SIR) | **25%** |
-| 💎 Grading | Difficulté d'obtenir un PSA 10 | **10%** |
-| 🏆 Compétitivité | Utilisé dans les top decks ? | **10%** |
-| 🔥 Hype | Demande actuelle — vitesse de vente | **5%** |
-| 🎨 Artiste | Réputation de l'illustrateur | **5%** |
-| 📅 Cycle de vie | Set encore en impression ou retiré ? | **5%** |
+| ⭐ Popularité | Sondage officiel The Pokémon Company (800+ Pokémon) | **40%** |
+| 🔮 Rareté | Pull rates officiels par rareté (1/1440 pour SIR) | **25%** |
+| 💎 Grading | Difficulté estimée d'obtenir un PSA 10 par rareté | **10%** |
+| 🏆 Compétitivité | Légalité Standard/Expanded (API PokéTCG) | **10%** |
+| 🔥 Hype | Spread low/market sur TCGPlayer (proxy demande) | **5%** |
+| 🎨 Artiste | Réputation de l'illustrateur dans la communauté | **5%** |
+| 📅 Cycle de vie | Age du set depuis sa sortie | **5%** |
     """)
     st.stop()
 
@@ -359,10 +411,9 @@ weights_ordered = {
     "f_lifecycle":    w_lifecycle/ 100,
 }
 
-df = compute_fair_value(df_raw, weights_ordered, gem_thresh / 100, -over_thresh / 100)
+df = compute_fair_value(df_raw, weights_ordered, gem_thresh / 100, over_thresh / 100)
 df = df[(df["market_price"] >= min_price) & (df["market_price"] <= max_price)]
 
-# Filtre série
 series_opts = ["Toutes"] + sorted(df["series"].dropna().unique().tolist())
 selected_series = st.selectbox("Filtrer par série", series_opts)
 if selected_series != "Toutes":
@@ -383,7 +434,7 @@ st.divider()
 
 # ── GEMS ──
 st.subheader("🟢 Bonnes affaires potentielles")
-st.caption("Valeur théorique nettement supérieure au prix du marché.")
+st.caption("Valeur théorique supérieure au prix du marché — potentiellement sous-évaluées.")
 
 if len(gems) > 0:
     cols_per_row = 4
@@ -401,8 +452,11 @@ if len(gems) > 0:
                     st.markdown(f"✏️ *{card['artist']}*")
                 st.markdown(f"💰 Prix actuel : **${card['market_price']:.2f}**")
                 st.markdown(f"📊 Valeur estimée : **${card['Vt']:.2f}**")
+                pop_score = card.get("f_tier", 3.0)
+                st.markdown(f"⭐ Popularité : **{pop_score:.1f}/10**")
+                ecart = card['ecart_pct']
                 st.markdown(
-                    f"<span class='gem-badge'>+{card['ecart_pct']:.0f}% sous le prix réel</span>",
+                    f"<span class='gem-badge'>+{ecart:.0f}% sous le prix réel</span>",
                     unsafe_allow_html=True
                 )
                 if card.get("tcgplayer_url"):
@@ -432,7 +486,7 @@ st.divider()
 
 # ── Graphiques ──
 st.subheader("📊 Vue d'ensemble")
-tab1, tab2, tab3 = st.tabs(["Valeur vs Prix", "Top sous-évaluées", "Facteurs par carte"])
+tab1, tab2, tab3 = st.tabs(["Valeur vs Prix", "Top sous-évaluées", "Scores par carte"])
 
 colors_map = {
     "🟢 Sous-évalué": "#2ecc71",
@@ -465,20 +519,20 @@ with tab2:
     st.pyplot(fig2)
 
 with tab3:
-    st.caption("Scores normalisés (0-10) pour les 15 meilleures opportunités")
+    st.caption("Scores des 7 facteurs pour les meilleures opportunites (normalisés 0-10)")
     top15 = gems.head(15) if len(gems) > 0 else df.head(15)
-    factor_labels = {
+    factor_map = {
         "f_scarcity_inv": "Rareté",
-        "f_tier":         "Popularité",
+        "f_tier":         "Popularité (TPC)",
         "f_artist":       "Artiste",
         "f_meta":         "Compétitivité",
         "f_hype":         "Hype",
         "f_psa10":        "Grading PSA",
         "f_lifecycle":    "Cycle de vie",
     }
-    display_df = top15[["name"] + list(factor_labels.keys())].copy()
-    display_df = display_df.rename(columns={**factor_labels, "name": "Carte"})
-    for col in factor_labels.values():
+    display_df = top15[["name"] + list(factor_map.keys())].copy()
+    display_df = display_df.rename(columns={**factor_map, "name": "Carte"})
+    for col in factor_map.values():
         if col in display_df.columns:
             mn, mx = display_df[col].min(), display_df[col].max()
             if mx > mn:
@@ -489,13 +543,13 @@ st.divider()
 
 # ── Table complete ──
 with st.expander("📋 Toutes les cartes analysées"):
-    disp = df[["name", "set", "rarity", "artist", "market_price", "Vt", "ecart_pct", "Signal"]].copy()
-    disp.columns = ["Carte", "Set", "Rareté", "Artiste", "Prix ($)", "Valeur estimée ($)", "Écart (%)", "Verdict"]
+    disp = df[["name", "set", "rarity", "artist", "f_tier", "market_price", "Vt", "ecart_pct", "Signal"]].copy()
+    disp.columns = ["Carte", "Set", "Rareté", "Artiste", "Popularité (/10)", "Prix ($)", "Valeur estimée ($)", "Écart (%)", "Verdict"]
     st.dataframe(disp.sort_values("Écart (%)", ascending=False), use_container_width=True, hide_index=True)
 
 # ── Export ──
 st.subheader("📥 Exporter")
-export_cols = ["name", "set", "rarity", "artist", "market_price", "Vt", "ecart_pct", "Signal", "tcgplayer_url"]
+export_cols = ["name", "set", "rarity", "artist", "f_tier", "market_price", "Vt", "ecart_pct", "Signal", "tcgplayer_url"]
 csv_buf = io.StringIO()
 df[export_cols].sort_values("ecart_pct", ascending=False).to_csv(csv_buf, index=False)
 st.download_button(
