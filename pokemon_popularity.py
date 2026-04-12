@@ -168,6 +168,29 @@ AVCLUB_RANKINGS = {
     "garbodor": 148,
     "cramorant": 149,
     "roserade": 150,
+
+    # ── Pokémon populaires absents de la liste AV Club ──
+    # Mis à égalité ~rank 100 (score 6.0) — reconnus mais non classés
+    "sylveon": 100,
+    "vaporeon": 100,
+    "espeon": 100,
+    "flareon": 100,
+    "glaceon": 100,
+    "leafeon": 100,
+    "raichu": 100,
+    "clefairy": 100,
+    "blastoise": 100,
+    "kyogre": 100,
+    "groudon": 100,
+    "palkia": 100,
+    "raikou": 100,
+    "zacian": 100,
+    "zamazenta": 100,
+    "eternatus": 100,
+    "calyrex": 100,
+    "spectrier": 100,
+    "inteleon": 100,
+    "cinccino": 100,
 }
 
 # Aliases supplémentaires pour matcher les noms de cartes TCG
