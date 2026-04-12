@@ -623,6 +623,19 @@ with col_r:
 if sel != "Toutes":
     df = df[df["series"] == sel]
 
+# ── Recherche par nom de carte ─────────────────────────────────────────────
+search_q = st.text_input(
+    "🔍 Rechercher une carte",
+    placeholder="Ex: Umbreon ex, Charizard, Pikachu...",
+    label_visibility="collapsed"
+)
+if search_q.strip():
+    mask = df["name"].str.contains(search_q.strip(), case=False, na=False)
+    df = df[mask]
+    if df.empty:
+        st.warning(f"Aucune carte trouvée pour « {search_q} »")
+        st.stop()
+
 gems  = df[df["Signal"] == "gem"].sort_values("ecart", ascending=False)
 overs = df[df["Signal"] == "over"].sort_values("ecart")
 fair  = df[df["Signal"] == "fair"].sort_values("ecart", ascending=False)
