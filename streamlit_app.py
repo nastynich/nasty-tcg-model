@@ -413,13 +413,29 @@ st.caption("7 facteurs vérifiés • Popularité TPC • Jouabilité Limitless 
 with st.sidebar:
     st.header("⚙️ Réglages")
 
-    st.subheader("📡 Données")
-    api_key = st.text_input(
-        "Clé API PokéTCG (optionnel)", type="password",
-        help="Sans clé : 1 000 req/jour. Clé gratuite sur pokemontcg.io/dev"
-    )
-
+    # Bouton vert en haut
+    st.markdown("""
+        <style>
+        div[data-testid="stButton"] > button {
+            background-color: #27ae60 !important;
+            color: white !important;
+            font-size: 16px !important;
+            font-weight: bold !important;
+            border: none !important;
+            border-radius: 8px !important;
+        }
+        div[data-testid="stButton"] > button:hover {
+            background-color: #2ecc71 !important;
+        }
+        div[data-testid="stButton"] > button:disabled {
+            background-color: #555 !important;
+            color: #999 !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    fetch_btn = st.button("🚀 Lancer l'analyse", disabled=not weights_valid, use_container_width=True)
     st.divider()
+
     st.subheader("🎚️ Poids des facteurs")
     st.caption("Total doit être exactement **100%**.")
 
@@ -441,9 +457,6 @@ with st.sidebar:
     else:
         st.markdown(f"<span class='total-high'>❌ Total : {total_w}% — trop de {total_w-100}%</span>", unsafe_allow_html=True)
         weights_valid = False
-
-    st.divider()
-    fetch_btn = st.button("🚀 Lancer l'analyse", disabled=not weights_valid, use_container_width=True)
 
     st.divider()
     st.subheader("📐 Seuils")
@@ -471,7 +484,7 @@ if "df_loaded" not in st.session_state:
 
 if fetch_btn and weights_valid:
     with st.spinner("Chargement des cartes SIR / IR / Ultra Rare... ~20 sec"):
-        fetched = fetch_live_data(RECENT_SETS_QUERY, max_cards=400, api_key=api_key)
+        fetched = fetch_live_data(RECENT_SETS_QUERY, max_cards=400, api_key="")
     if fetched.empty:
         st.error("Aucune carte récupérée. Vérifie ta connexion ou ajoute une clé API.")
     else:
@@ -542,14 +555,22 @@ c4.metric("🔴 Surévaluées",     len(overs))
 c5.metric("📊 R² modèle",       f"{model_r2:.2f}")
 st.divider()
 
-# ── GEMS ──
-st.subheader("🟢 Bonnes affaires potentielles")
-st.caption("Valeur théorique supérieure au prix du marché selon les 7 facteurs analysés.")
+# ── ONGLETS PRINCIPAUX ──
+tab_gems, tab_over, tab_fair = st.tabs([
+    f"🟢 Sous-évaluées ({len(gems)})",
+    f"🔴 Surévaluées ({len(overs)})",
+    f"🟡 Prix juste ({len(fair)})"
+])
 
-if len(gems) > 0:
+def render_card_grid(cards_df, badge_class, ecart_prefix="", max_cards=20):
+    """Render cards in a 4-column grid."""
     cols_per_row = 4
-    for i in range(0, min(len(gems), 20), cols_per_row):
-        row_cards = gems.iloc[i:i+cols_per_row]
+    cards_list = cards_df.head(max_cards)
+    if cards_list.empty:
+        st.info("Aucune carte dans cette catégorie avec les filtres actuels.")
+        return
+    for i in range(0, len(cards_list), cols_per_row):
+        row_cards = cards_list.iloc[i:i+cols_per_row]
         cols = st.columns(cols_per_row)
         for idx, (_, card) in enumerate(row_cards.iterrows()):
             with cols[idx]:
@@ -561,8 +582,10 @@ if len(gems) > 0:
                 if card.get("artist"):
                     st.markdown(f"✏️ *{card['artist']}*")
                 st.markdown(f"💰 **${card['market_price']:.2f}** → 📊 **${card['Vt']:.2f}**")
+                ecart_val = card['ecart_pct']
+                ecart_str = f"+{ecart_val:.0f}%" if ecart_val >= 0 else f"{ecart_val:.0f}%"
                 st.markdown(
-                    f"<span class='gem-badge'>+{card['ecart_pct']:.0f}%</span> "
+                    f"<span class='{badge_class}'>{ecart_str}</span> "
                     f"<span class='psa-label'>PSA10: {card['gem_rate_pct']:.0f}% gem rate</span>",
                     unsafe_allow_html=True
                 )
@@ -574,27 +597,18 @@ if len(gems) > 0:
                 st.markdown(f"<span class='{conf_class}'>Confiance: {card['confidence']}</span>", unsafe_allow_html=True)
                 if card.get("tcgplayer_url"):
                     st.markdown(f"[Voir sur TCGPlayer ↗]({card['tcgplayer_url']})")
-else:
-    st.info("Aucune bonne affaire détectée. Essaie de baisser le seuil sous-évalué.")
 
-st.divider()
+with tab_gems:
+    st.caption(f"Valeur estimée **{gem_thresh}%+ au-dessus** du prix marché — potentiellement sous-évaluées.")
+    render_card_grid(gems, "gem-badge", max_cards=20)
 
-# ── OVERVALUED ──
-with st.expander(f"🔴 Cartes surévaluées ({len(overs)}) — à éviter"):
-    for _, card in overs.head(10).iterrows():
-        ca, cb = st.columns([1, 5])
-        with ca:
-            if card.get("image_url"):
-                st.image(card["image_url"], width=60)
-        with cb:
-            st.markdown(f"**{card['name']}** — *{card['set']}* | ✏️ {card.get('artist','')}")
-            st.markdown(
-                f"Prix actuel : **${card['market_price']:.2f}** | "
-                f"Valeur estimée : **${card['Vt']:.2f}** | "
-                f"<span class='over-badge'>-{abs(card['ecart_pct']):.0f}%</span> | "
-                f"<span class='psa-label'>PSA10 gem rate: {card['gem_rate_pct']:.0f}%</span>",
-                unsafe_allow_html=True
-            )
+with tab_over:
+    st.caption(f"Prix marché **{over_thresh}%+ au-dessus** de la valeur estimée — à éviter ou vendre.")
+    render_card_grid(overs.sort_values("ecart_pct"), "over-badge", max_cards=20)
+
+with tab_fair:
+    st.caption("Cartes au prix juste selon le modèle.")
+    render_card_grid(fair.sort_values("ecart_pct", ascending=False), "fair-badge", max_cards=20)
 
 st.divider()
 
