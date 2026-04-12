@@ -400,7 +400,8 @@ def run_model(df, w, gt, ot):
       courbe non-linéaire douce, sans plafond artificiel
     """
     df = df.copy()
-    df["f_scarcity_inv"] = -np.log(df["f_scarcity"])
+    # Rareté individuelle = pull rate catégorie ÷ nb de SIR dans le set
+    df["f_scarcity_inv"] = -np.log(df["f_specific_pull"])
 
     # ── Score qualitatif pondéré ──────────────────────────────────────────
     sc = MinMaxScaler()
