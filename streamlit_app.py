@@ -39,6 +39,7 @@ st.markdown("""
 # ─────────────────────────────────────────────
 
 from pokemon_popularity import get_popularity_score
+from meta_scores import get_meta_score
 
 # ─────────────────────────────────────────────
 # CONSTANTES
@@ -148,12 +149,10 @@ def fetch_live_data(query: str, max_cards: int = 400, api_key: str = "") -> pd.D
             artist       = card.get("artist", "")
             card_name    = card.get("name", "?")
 
-            if legalities.get("standard") == "Legal":
-                meta = 9.0
-            elif legalities.get("expanded") == "Legal":
-                meta = 5.0
-            else:
-                meta = 1.0
+            # Score méta réel depuis Limitless TCG (46 top decks)
+            set_id      = card.get("set", {}).get("id", "")
+            card_number = card.get("number", "")
+            meta        = get_meta_score(set_id, card_number)
 
             hype = 5.0
             for ptype in ["holofoil", "reverseHolofoil", "normal"]:
