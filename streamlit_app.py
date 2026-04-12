@@ -369,109 +369,75 @@ def fetch_data(max_cards=400, _v=5):  # bump _v pour invalider cache
 
 def run_model(df, w, gt, ot):
     """
-    Moteur v4 — Score-relatif intra-rareté avec variables de dilution.
+    Moteur v5 — Score qualitatif intra-rareté UNIQUEMENT.
 
-    Variables de dilution injectées :
-      Rs  (f_specific_pull)  : pull rate individuel = taux_categ / nb_chase_set
-      Dset (f_chase_density) : densité des chase cards dans le set
-      Aprod (f_accessibility): coefficient produit (coffret vs booster box)
-      Vprint (f_print_vol)   : volume d'impression estimé
-
-    Logique :
-    1. Score composite pondéré par l'utilisateur sur les 7 facteurs de base.
-    2. Multiplicateur de dilution D = f(Rs, Dset, Aprod, Vprint) — boost exponentiel
-       pour les cartes issues de sets denses/spéciaux avec faible print volume.
-    3. Score final = score_base * D (normalisé intra-rareté en percentile).
-    4. Fair Value = prix_marché * mult_percentile (pas de plafond — la réalité n'en a pas).
+    Architecture :
+    - Les variables de dilution (Rs, Dset, Aprod, Vprint) font partie du contexte
+      DÉJÀ reflété dans le prix marché. On n'en a pas besoin pour gonfler le score.
+    - Ce qui compte : est-ce que CETTE carte est sous/surévaluée vs ses pairs de même rareté?
+    - Score = 7 facteurs qualitatifs pondérés par l'utilisateur
+    - Rank = percentile intra-rareté du score (Umbreon vs autres SIR, pas vs Ultra Rare)
+    - Vt = prix_marché × multiplicateur(rank)
+      rank 0.0 → ×0.5 | rank 0.5 → ×1.0 | rank 1.0 → ×1.9
+      courbe non-linéaire douce, sans plafond artificiel
     """
     df = df.copy()
     df["f_scarcity_inv"] = -np.log(df["f_scarcity"])
 
+    # ── Score qualitatif pondéré ──────────────────────────────────────────
     sc = MinMaxScaler()
     for c in FCOLS:
         df[f"{c}_n"] = sc.fit_transform(df[[c]])
     wa = np.array([w[c] for c in FCOLS])
-    df["score_base"] = df[[f"{c}_n" for c in FCOLS]].values.dot(wa) / (wa.sum() or 1)
+    df["score_q"] = df[[f"{c}_n" for c in FCOLS]].values.dot(wa) / (wa.sum() or 1)
 
-    # ── Dilution Multiplier D ─────────────────────────────────────────────
-    # Rs : plus la carte est rare individuellement, plus D monte
-    # On normalise Rs en log pour éviter l'écrasement (1/28800 vs 1/1440)
-    # Fallback si colonnes de dilution absentes (vieux cache)
-    for col, default in [("f_specific_pull", 1/1440), ("f_chase_density", 12),
-                          ("f_accessibility", 1.0), ("f_print_vol", 1.0)]:
-        if col not in df.columns:
-            df[col] = default
-    df["_log_rs"] = -np.log(df["f_specific_pull"].clip(lower=1e-8))
-    rs_min, rs_max = df["_log_rs"].min(), df["_log_rs"].max()
-    df["_rs_n"] = (df["_log_rs"] - rs_min) / (rs_max - rs_min + 1e-9)  # 0-1
+    # ── Percentile rank INTRA-RARETÉ ─────────────────────────────────────
+    # Chaque carte est jugée uniquement vs ses pairs de même rareté
+    # Umbreon SIR Prismatic vs autres SIR — pas vs Ultra Rare à $10
+    df["qual_rank"] = df.groupby("rarity")["score_q"].rank(pct=True)
 
-    # Dset : densité inversée normalisée (plus de chase cards = plus dilué = D monte)
-    df["_dset_n"] = MinMaxScaler().fit_transform(df[["f_chase_density"]])
-
-    # Aprod : déjà entre 0.5 et 1.6
-    df["_aprod_n"] = (df["f_accessibility"] - 0.5) / 1.1  # 0-1
-
-    # Vprint : inversé (petit volume = plus rare)
-    df["_vprint_n"] = 1.0 - MinMaxScaler().fit_transform(df[["f_print_vol"]])
-
-    # D = moyenne pondérée des 4 composantes → rescalé entre 0.6 et 2.5
-    # Pondérations : Rs a le plus grand impact (exponentiel comme demandé)
-    d_raw = (
-        0.45 * df["_rs_n"] +
-        0.25 * df["_dset_n"] +
-        0.20 * df["_aprod_n"] +
-        0.10 * df["_vprint_n"]
-    )
-    # Exponentiel sur Rs : D = d_raw^0.7 rescalé → plage 0.6 – 2.8
-    df["D_mult"] = 0.6 + (d_raw ** 0.7) * 2.2
-
-    # ── Score final = score_base * D ─────────────────────────────────────
-    df["score_final"] = df["score_base"] * df["D_mult"]
-
-    # ── Percentile rank INTRA-RARETÉ du score final ───────────────────────
-    # Chaque carte comparée uniquement à ses pairs de même rareté
-    df["score_rank"] = df.groupby("rarity")["score_final"].rank(pct=True)
-
-    # ── Multiplicateur de Fair Value (sans plafond — la réalité n'en a pas) ──
-    # rank 0.0 → 0.25x (très surévaluée vs ses pairs)
-    # rank 0.5 → 1.0x  (prix juste = médiane de sa rareté)
-    # rank 1.0 → 4.0x  (monstre de valeur comme Umbreon Prismatic)
-    # Courbe non-linéaire : explosion exponentielle au-delà du 85e centile
+    # ── Multiplicateur Fair Value ─────────────────────────────────────────
+    # Courbe en deux segments :
+    #   rank 0.0 → 0.50x  (très surévaluée pour sa rareté)
+    #   rank 0.5 → 1.00x  (au prix juste = médiane de sa rareté)
+    #   rank 0.75 → 1.40x
+    #   rank 1.0 → ~1.90x (meilleure carte de sa rareté)
+    # Pas de plafond — les cartes PEUVENT être très sous/surévaluées
     def rank_to_mult(r):
         if r <= 0.5:
-            # Linéaire 0.25 → 1.0
-            return 0.25 + (1.0 - 0.25) * (r / 0.5)
+            # Linéaire descendant : 0.50 → 1.00
+            return 0.50 + 0.50 * (r / 0.5)
         else:
-            # Exponentiel 1.0 → ∞ (pas de plafond)
-            # À rank=0.75 → ~1.8x, rank=0.90 → ~2.8x, rank=0.99 → ~5x+
+            # Non-linéaire ascendant : 1.00 → ~1.90
             t = (r - 0.5) / 0.5  # 0→1
-            return 1.0 + (np.expm1(t * 1.8))  # e^(t*1.8)-1 + 1
+            return 1.0 + 0.9 * (t ** 1.4)  # légèrement convexe
 
-    df["mult"] = df["score_rank"].apply(rank_to_mult)
+    df["mult"] = df["qual_rank"].apply(rank_to_mult)
     df["Vt"]   = (df["market_price"] * df["mult"]).round(2)
     df["ecart"]= ((df["Vt"] - df["market_price"]) / df["market_price"] * 100).round(1)
 
-    # ── Signal (sans plafond d'écart) ────────────────────────────────────
+    # ── Signal ───────────────────────────────────────────────────────────
     def sig(r):
         if r["ecart"] > gt * 100:  return "gem"
         if r["ecart"] < -ot * 100: return "over"
         return "fair"
     df["Signal"] = df.apply(sig, axis=1)
 
-    # ── R² global (informatif) ────────────────────────────────────────────
+    # ── R² (informatif — score_q vs log-price par rareté) ────────────────
     try:
         from sklearn.linear_model import Ridge as _R
         _m = _R(alpha=1.0)
-        _m.fit(df[["score_final"]], np.log1p(df["market_price"]))
-        yp = _m.predict(df[["score_final"]])
+        _m.fit(df[["score_q"]], np.log1p(df["market_price"]))
+        yp = _m.predict(df[["score_q"]])
         y  = np.log1p(df["market_price"].values)
-        r2 = max(0, 1 - np.sum((y - yp)**2) / np.sum((y - np.mean(y))**2))
+        r2 = max(0, 1 - np.sum((y-yp)**2) / np.sum((y-np.mean(y))**2))
     except:
         r2 = 0.0
 
-    df.drop(columns=["_log_rs","_rs_n","_dset_n","_aprod_n","_vprint_n",
-                      "score_base","D_mult","score_final","score_rank","mult"], inplace=True)
+    df.drop(columns=[c for c in ["score_q","qual_rank","mult"] if c in df.columns],
+            inplace=True)
     return df, round(r2, 3)
+
 
 def card_html(c, sig):
     e = c["ecart"]
