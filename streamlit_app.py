@@ -488,6 +488,7 @@ def card_html(c, sig):
         <b>Pop:</b> {c['f_tier']:.1f}/10 &nbsp;·&nbsp;
         <b>Méta:</b> {c['f_meta']:.1f}/10 &nbsp;·&nbsp;
         <b>Hype:</b> {c['hype_label']}<br>
+        <b>Vélocité 30j:</b> {("🚀 +" if (c.get("f_velocity",5) or 5) >= 7 else ("📈 +" if (c.get("f_velocity",5) or 5) >= 6 else ("➡️ " if (c.get("f_velocity",5) or 5) >= 4 else "📉 "))) + str(round((c.get("f_velocity",5) or 5),1))}/10<br>
         <b>PSA 10 gem rate:</b> {c['gem_rate']:.0f}%<br>
         {tcg}
       </div>
