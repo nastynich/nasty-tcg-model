@@ -427,7 +427,7 @@ def run_model(df, w, gt, ot):
     """
     df = df.copy()
     # Rareté individuelle = pull rate catégorie ÷ nb de SIR dans le set
-    df["f_scarcity_inv"] = -np.log(df["f_specific_pull"])
+    df["f_scarcity_inv"] = -np.log(df["f_specific_pull"].clip(lower=1e-9))
 
     # ── Score qualitatif pondéré ──────────────────────────────────────────
     sc = MinMaxScaler()
@@ -648,7 +648,11 @@ W = {
     "f_artist": w_artist/100, "f_meta": w_meta/100,
     "f_hype": w_hype/100, "f_psa10": w_psa10/100, "f_lifecycle": w_lifecycle/100,
 }
-df, r2 = run_model(df_raw, W, gem_t/100, over_t/100)
+try:
+    df, r2 = run_model(df_raw, W, gem_t/100, over_t/100)
+except Exception as _e:
+    st.error(f"Erreur modèle : {_e}")
+    st.stop()
 
 df = df[(df["market_price"] >= min_p) & (df["market_price"] <= max_p)]
 if filt_rar: df = df[df["rarity"].isin(filt_rar)]
