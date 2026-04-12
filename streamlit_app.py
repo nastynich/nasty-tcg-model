@@ -290,9 +290,17 @@ def fetch_data(max_cards=400):
 
 def run_model(df, w, gt, ot):
     """
-    Modèle par tranches de prix (log-segments).
-    On entraîne un Ridge séparé pour chaque tier de prix,
-    puis on plafonne l'écart à ±75% pour éviter les valeurs absurdes.
+    Approche score-relatif : chaque carte est jugée individuellement.
+
+    Logique :
+    1. On calcule un score composite (0-1) basé sur les 7 facteurs pondérés.
+    2. On normalise le score PAR RARETÉ — chaque carte est comparée aux autres
+       cartes de même rareté, pas à la totalité du marché.
+    3. La Fair Value = prix_réel * multiplicateur_relatif au score de rareté.
+       - Score au 50e percentile de sa rareté → Vt = prix marché (0% d'écart)
+       - Score élevé → Vt > prix (potentiellement sous-évaluée)
+       - Score faible → Vt < prix (potentiellement surévaluée)
+    4. Le multiplicateur est plafonné à ×2.5 / ×0.4 pour rester réaliste.
     """
     df = df.copy()
     df["f_scarcity_inv"] = -np.log(df["f_scarcity"])
@@ -302,45 +310,25 @@ def run_model(df, w, gt, ot):
     wa = np.array([w[c] for c in FCOLS])
     df["score"] = df[[f"{c}_n" for c in FCOLS]].values.dot(wa) / (wa.sum() or 1)
 
-    # ── Segmentation par tier de prix ──
-    # On crée 3 buckets log-uniformes : budget / mid / premium
-    log_prices = np.log1p(df["market_price"])
-    p33 = np.percentile(log_prices, 33)
-    p66 = np.percentile(log_prices, 66)
+    # ── Score normalisé par rareté (percentile rank) ──
+    # Chaque carte reçoit un rang 0-1 parmi les cartes de même rareté
+    df["score_rank"] = df.groupby("rarity")["score"].rank(pct=True)
 
-    def get_tier(lp):
-        if lp <= p33: return 0
-        if lp <= p66: return 1
-        return 2
+    # ── Multiplicateur relatif centré sur 1.0 ──
+    # score_rank = 0.5 → mult = 1.0 (prix juste par définition)
+    # score_rank = 1.0 → mult = max_mult (très bonne valeur)
+    # score_rank = 0.0 → mult = min_mult (surévaluée)
+    max_mult = 2.0   # max +100%
+    min_mult = 0.45  # max -55%
+    # Interpolation linéaire : rank 0→min_mult, rank 0.5→1.0, rank 1→max_mult
+    df["mult"] = df["score_rank"].apply(
+        lambda r: min_mult + (1.0 - min_mult) * (r / 0.5) if r <= 0.5
+                  else 1.0 + (max_mult - 1.0) * ((r - 0.5) / 0.5)
+    )
 
-    df["_tier"] = log_prices.apply(get_tier)
-    df["Vt"] = np.nan
-
-    # Entraîner un Ridge par tier
-    for tier_id in [0, 1, 2]:
-        idx = df["_tier"] == tier_id
-        if idx.sum() < 5:
-            # Pas assez de données — fallback global
-            continue
-        X_t = df.loc[idx, "score"].values.reshape(-1, 1)
-        y_t = np.log1p(df.loc[idx, "market_price"].values)
-        m_t = Ridge(alpha=2.0)
-        m_t.fit(X_t, y_t)
-        df.loc[idx, "Vt"] = np.expm1(m_t.predict(X_t)).round(2)
-
-    # Fallback global pour NaN restants
-    nan_mask = df["Vt"].isna()
-    if nan_mask.any():
-        X_all = df.loc[~nan_mask, "score"].values.reshape(-1, 1)
-        y_all = np.log1p(df.loc[~nan_mask, "market_price"].values)
-        m_fb = Ridge(alpha=2.0); m_fb.fit(X_all, y_all)
-        df.loc[nan_mask, "Vt"] = np.expm1(
-            m_fb.predict(df.loc[nan_mask, "score"].values.reshape(-1, 1))
-        ).round(2)
-
-    # ── Calcul de l'écart PLAFONNÉ à ±75% ──
-    raw_ecart = ((df["Vt"] - df["market_price"]) / df["market_price"] * 100)
-    df["ecart"] = raw_ecart.clip(-75, 75).round(1)
+    # ── Fair Value individuelle ──
+    df["Vt"] = (df["market_price"] * df["mult"]).round(2)
+    df["ecart"] = ((df["Vt"] - df["market_price"]) / df["market_price"] * 100).round(1)
 
     # ── Signal ──
     def sig(r):
@@ -349,14 +337,18 @@ def run_model(df, w, gt, ot):
         return "fair"
     df["Signal"] = df.apply(sig, axis=1)
 
-    # R² global (informatif)
-    X_g = df["score"].values.reshape(-1, 1)
-    y_g = np.log1p(df["market_price"].values)
-    m_g = Ridge(alpha=2.0); m_g.fit(X_g, y_g)
-    yp_g = m_g.predict(X_g)
-    r2 = max(0, 1 - np.sum((y_g - yp_g)**2) / np.sum((y_g - np.mean(y_g))**2))
+    # R² approximatif (score vs log-price par rareté)
+    try:
+        from sklearn.linear_model import Ridge as _R
+        _m = _R(alpha=1.0)
+        _m.fit(df[["score"]], np.log1p(df["market_price"]))
+        yp = _m.predict(df[["score"]])
+        y  = np.log1p(df["market_price"].values)
+        r2 = max(0, 1 - np.sum((y-yp)**2) / np.sum((y-np.mean(y))**2))
+    except:
+        r2 = 0.0
 
-    df.drop(columns=["_tier"], inplace=True)
+    df.drop(columns=["score_rank","mult"], inplace=True)
     return df, round(r2, 3)
 
 def card_html(c, sig):
