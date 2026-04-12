@@ -301,7 +301,7 @@ DEFAULTS = {"tier":35,"scarcity":25,"psa10":10,"meta":10,"hype":8,"artist":7,"li
 FCOLS = ["f_scarcity_inv","f_tier","f_artist","f_meta","f_hype","f_psa10","f_lifecycle"]
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_data(max_cards=400):
+def fetch_data(max_cards=400, _v=5):  # bump _v pour invalider cache
     rows, seen, page = [], set(), 1
     while len(rows) < max_cards:
         size = min(250, max_cards - len(rows))
@@ -396,6 +396,11 @@ def run_model(df, w, gt, ot):
     # ── Dilution Multiplier D ─────────────────────────────────────────────
     # Rs : plus la carte est rare individuellement, plus D monte
     # On normalise Rs en log pour éviter l'écrasement (1/28800 vs 1/1440)
+    # Fallback si colonnes de dilution absentes (vieux cache)
+    for col, default in [("f_specific_pull", 1/1440), ("f_chase_density", 12),
+                          ("f_accessibility", 1.0), ("f_print_vol", 1.0)]:
+        if col not in df.columns:
+            df[col] = default
     df["_log_rs"] = -np.log(df["f_specific_pull"].clip(lower=1e-8))
     rs_min, rs_max = df["_log_rs"].min(), df["_log_rs"].max()
     df["_rs_n"] = (df["_log_rs"] - rs_min) / (rs_max - rs_min + 1e-9)  # 0-1
@@ -586,7 +591,7 @@ if "df" not in st.session_state:
 
 if fetch_btn and ok:
     with st.spinner("Chargement... ~20 sec"):
-        fetched = fetch_data(400)
+        fetched = fetch_data(400, _v=5)
     if fetched.empty:
         st.error("Aucune carte. Vérifie ta connexion.")
     else:
