@@ -344,6 +344,7 @@ def fetch_data(max_cards=400, _v=5):  # bump _v pour invalider cache
                 if pt in prices and prices[pt].get("market"):
                     mkt = prices[pt]["market"]; break
             if not mkt or mkt <= 0: continue
+            mkt = mkt * get_usd_to_cad()  # Convertir en CAD dès le fetch
             rar = c.get("rarity", "Unknown")
             art = c.get("artist", "")
             nm  = c.get("name", "?")
@@ -471,11 +472,11 @@ def card_html(c, sig):
     <div class="price-block">
       <div>
         <div class="price-market">Marché</div>
-        <div class="price-mnum">C${round(c['market_price']*FX,2):.2f}</div>
+        <div class="price-mnum">C${c['market_price']:.2f}</div>
       </div>
       <div>
         <div class="price-fv-lbl">Fair Value</div>
-        <div class="price-fv-num">C${round(c['Vt']*FX,2):.2f}</div>
+        <div class="price-fv-num">C${c['Vt']:.2f}</div>
       </div>
     </div>
     <div><span class="ecart-pill {pc}">{es}</span></div>
@@ -667,8 +668,7 @@ with t4:
 st.divider()
 with st.expander("📋 Tableau complet"):
     disp = df[["name","set","rarity","market_price","Vt","ecart","Signal"]].copy()
-    disp["market_price"] = (disp["market_price"] * FX).round(2)
-    disp["Vt"] = (disp["Vt"] * FX).round(2)
+    # prix déjà en CAD depuis le fetch
     disp.columns = ["Carte","Set","Rareté","Prix(C$)","FV(C$)","Écart(%)","Signal"]
     st.dataframe(disp.sort_values("Écart(%)", ascending=False),
                  use_container_width=True, hide_index=True)
