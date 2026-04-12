@@ -342,7 +342,7 @@ DEFAULTS = {"tier":35,"scarcity":25,"psa10":10,"meta":10,"hype":8,"artist":7,"li
 FCOLS = ["f_scarcity_inv","f_tier","f_artist","f_meta","f_hype","f_psa10","f_lifecycle"]
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_data(max_cards=400, _v=5):  # bump _v pour invalider cache
+def fetch_data(max_cards=400, _v=6):  # bump _v pour invalider cache
     rows, seen, page = [], set(), 1
     while len(rows) < max_cards:
         size = min(250, max_cards - len(rows))
@@ -584,6 +584,10 @@ with st.sidebar:
         ok = False
 
     fetch_btn = st.button("🚀 Lancer l'analyse", disabled=not ok, use_container_width=True)
+    if st.button("🗑️ Vider le cache", use_container_width=True):
+        st.cache_data.clear()
+        st.session_state.df = pd.DataFrame()
+        st.rerun()
 
     st.markdown('<hr class="sb-div">', unsafe_allow_html=True)
     st.markdown('<div class="sb-label">Seuils</div>', unsafe_allow_html=True)
@@ -620,7 +624,7 @@ if "df" not in st.session_state:
 
 if fetch_btn and ok:
     with st.spinner("Chargement... ~20 sec"):
-        fetched = fetch_data(400, _v=5)
+        fetched = fetch_data(400, _v=6)
     if fetched.empty:
         st.error("Aucune carte. Vérifie ta connexion.")
     else:
