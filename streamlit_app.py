@@ -289,6 +289,11 @@ def fetch_data(max_cards=400):
     return df
 
 def run_model(df, w, gt, ot):
+    """
+    Modèle par tranches de prix (log-segments).
+    On entraîne un Ridge séparé pour chaque tier de prix,
+    puis on plafonne l'écart à ±75% pour éviter les valeurs absurdes.
+    """
     df = df.copy()
     df["f_scarcity_inv"] = -np.log(df["f_scarcity"])
     sc = MinMaxScaler()
@@ -297,29 +302,61 @@ def run_model(df, w, gt, ot):
     wa = np.array([w[c] for c in FCOLS])
     df["score"] = df[[f"{c}_n" for c in FCOLS]].values.dot(wa) / (wa.sum() or 1)
 
-    # Entraîner sur P10-P90 pour ignorer les outliers de prix
-    p10 = df["market_price"].quantile(0.10)
-    p90 = df["market_price"].quantile(0.90)
-    mask = (df["market_price"] >= p10) & (df["market_price"] <= p90)
-    X_tr = df.loc[mask, "score"].values.reshape(-1, 1)
-    y_tr = np.log1p(df.loc[mask, "market_price"].values)
-    m = Ridge(alpha=1.0)
-    m.fit(X_tr, y_tr)
+    # ── Segmentation par tier de prix ──
+    # On crée 3 buckets log-uniformes : budget / mid / premium
+    log_prices = np.log1p(df["market_price"])
+    p33 = np.percentile(log_prices, 33)
+    p66 = np.percentile(log_prices, 66)
 
-    df["Vt"] = np.expm1(m.predict(df[["score"]].values)).round(2)
-    df["ecart"] = ((df["Vt"] - df["market_price"]) / df["market_price"] * 100).round(1)
+    def get_tier(lp):
+        if lp <= p33: return 0
+        if lp <= p66: return 1
+        return 2
 
-    # Anti-outlier : écart > 250% ou < -85% → forcé en "fair"
+    df["_tier"] = log_prices.apply(get_tier)
+    df["Vt"] = np.nan
+
+    # Entraîner un Ridge par tier
+    for tier_id in [0, 1, 2]:
+        idx = df["_tier"] == tier_id
+        if idx.sum() < 5:
+            # Pas assez de données — fallback global
+            continue
+        X_t = df.loc[idx, "score"].values.reshape(-1, 1)
+        y_t = np.log1p(df.loc[idx, "market_price"].values)
+        m_t = Ridge(alpha=2.0)
+        m_t.fit(X_t, y_t)
+        df.loc[idx, "Vt"] = np.expm1(m_t.predict(X_t)).round(2)
+
+    # Fallback global pour NaN restants
+    nan_mask = df["Vt"].isna()
+    if nan_mask.any():
+        X_all = df.loc[~nan_mask, "score"].values.reshape(-1, 1)
+        y_all = np.log1p(df.loc[~nan_mask, "market_price"].values)
+        m_fb = Ridge(alpha=2.0); m_fb.fit(X_all, y_all)
+        df.loc[nan_mask, "Vt"] = np.expm1(
+            m_fb.predict(df.loc[nan_mask, "score"].values.reshape(-1, 1))
+        ).round(2)
+
+    # ── Calcul de l'écart PLAFONNÉ à ±75% ──
+    raw_ecart = ((df["Vt"] - df["market_price"]) / df["market_price"] * 100)
+    df["ecart"] = raw_ecart.clip(-75, 75).round(1)
+
+    # ── Signal ──
     def sig(r):
-        if abs(r["ecart"]) > 250: return "fair"
-        if r["ecart"] > gt * 100: return "gem"
+        if r["ecart"] > gt * 100:  return "gem"
         if r["ecart"] < -ot * 100: return "over"
         return "fair"
     df["Signal"] = df.apply(sig, axis=1)
 
-    yp = m.predict(df[["score"]].values)
-    y  = np.log1p(df["market_price"].values)
-    r2 = max(0, 1 - np.sum((y - yp)**2) / np.sum((y - np.mean(y))**2))
+    # R² global (informatif)
+    X_g = df["score"].values.reshape(-1, 1)
+    y_g = np.log1p(df["market_price"].values)
+    m_g = Ridge(alpha=2.0); m_g.fit(X_g, y_g)
+    yp_g = m_g.predict(X_g)
+    r2 = max(0, 1 - np.sum((y_g - yp_g)**2) / np.sum((y_g - np.mean(y_g))**2))
+
+    df.drop(columns=["_tier"], inplace=True)
     return df, round(r2, 3)
 
 def card_html(c, sig):
