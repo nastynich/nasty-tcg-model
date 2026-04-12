@@ -308,6 +308,30 @@ def hype(prices):
         break
     return (round(np.mean(sigs), 1) if sigs else 5.0, lbl)
 
+# ── Mapping pokemontcg.io set ID → TCGdex set ID ─────────────────────────
+def pokeid_to_tcgdex(set_id: str) -> str:
+    import re
+    m = re.match(r'^sv(\d+)pt(\d+)$', set_id)
+    if m: return f"sv{int(m.group(1)):02d}.{int(m.group(2))}"
+    m = re.match(r'^sv(\d+)$', set_id)
+    if m: return f"sv{int(m.group(1)):02d}"
+    m = re.match(r'^swsh(\d+)pt(\d+)$', set_id)
+    if m: return f"swsh{m.group(1)}.{m.group(2)}"
+    return set_id
+
+@st.cache_data(ttl=7200, show_spinner=False)
+def fetch_price_history(tcgdex_card_id: str) -> dict:
+    try:
+        r = requests.get(f"https://api.tcgdex.net/v2/en/cards/{tcgdex_card_id}", timeout=6)
+        if r.status_code != 200: return {}
+        cm = r.json().get("pricing", {}).get("cardmarket", {}) or {}
+        avg1, avg7, avg30 = cm.get("avg1"), cm.get("avg7"), cm.get("avg30")
+        if not avg7 or not avg30: return {}
+        vel_7_30 = round((avg7 - avg30) / avg30 * 100, 1)
+        vel_1_7  = round((avg1 - avg7)  / avg7  * 100, 1) if avg1 else None
+        return {"avg7": avg7, "avg30": avg30, "vel_7_30": vel_7_30, "vel_1_7": vel_1_7}
+    except: return {}
+
 QUERY = (
     '(set.series:"Scarlet & Violet" OR set.series:"Sword & Shield") '
     '(rarity:"Special Illustration Rare" OR rarity:"Illustration Rare" '
@@ -376,6 +400,8 @@ def fetch_data(max_cards=400, _v=5):  # bump _v pour invalider cache
                 "market_price": round(mkt, 2),
                 "tcgplayer_url": tcp.get("url", ""),
                 "image_url": c.get("images", {}).get("small", ""),
+                "tcgdex_id": f"{pokeid_to_tcgdex(sid)}-{num}",
+                "f_velocity": 5.0,
             })
         if len(cards) < size: break
         page += 1
@@ -458,6 +484,21 @@ def run_model(df, w, gt, ot):
     return df, round(r2, 3)
 
 
+def _vel_label(tcgdex_id: str, default: float = 5.0) -> str:
+    """Fetch vélocité pour UNE carte (via cache) et retourne un label HTML."""
+    hist = fetch_price_history(tcgdex_id) if tcgdex_id else {}
+    v30  = hist.get("vel_7_30")
+    v7   = hist.get("vel_1_7")
+    score = default
+    if v30 is not None: score += min(2.5, max(-2.5, v30 / 6.0))
+    if v7  is not None: score += min(1.5, max(-1.5, v7  / 10.0))
+    score = round(min(10.0, max(0.0, score)), 1)
+    if   score >= 7.5: return f"🚀 +{score}/10  ({f'+{v30:.1f}%' if v30 else ''})"
+    elif score >= 6.0: return f"📈 {score}/10  ({f'+{v30:.1f}%' if v30 else ''})"
+    elif score >= 4.0: return f"➡️  {score}/10  (stable)"
+    elif score >= 2.5: return f"📉 {score}/10  ({f'{v30:.1f}%' if v30 else ''})"
+    else:              return f"🧊 {score}/10  (chute)"
+
 def card_html(c, sig):
     e = c["ecart"]
     es = f"+{e:.0f}%" if e >= 0 else f"{e:.0f}%"
@@ -489,7 +530,7 @@ def card_html(c, sig):
         <b>Pop:</b> {c['f_tier']:.1f}/10 &nbsp;·&nbsp;
         <b>Méta:</b> {c['f_meta']:.1f}/10 &nbsp;·&nbsp;
         <b>Hype:</b> {c['hype_label']}<br>
-        <b>Vélocité 30j:</b> {("🚀 +" if (c.get("f_velocity",5) or 5) >= 7 else ("📈 +" if (c.get("f_velocity",5) or 5) >= 6 else ("➡️ " if (c.get("f_velocity",5) or 5) >= 4 else "📉 "))) + str(round((c.get("f_velocity",5) or 5),1))}/10<br>
+        <b>Vélocité 30j:</b> {_vel_label(c.get("tcgdex_id",""), c.get("f_velocity",5))}<br>
         <b>PSA 10 gem rate:</b> {c['gem_rate']:.0f}%<br>
         {tcg}
       </div>
