@@ -18,11 +18,20 @@ def get_usd_to_cad():
     except:
         return 1.38  # fallback
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_eur_to_cad():
+    try:
+        r = requests.get("https://api.exchangerate-api.com/v4/latest/EUR", timeout=5)
+        return r.json()["rates"]["CAD"]
+    except:
+        return 1.62  # fallback EUR→CAD
+
 st.set_page_config(page_title="The Nasty Model", page_icon="🎴", layout="wide")
 
 AVATAR_URL = "https://base44.app/api/apps/69dae320409ba22186ac9552/files/mp/public/69dae320409ba22186ac9552/fb5969149_60b86a1b8_NastyPP_07.png"
 
-FX = get_usd_to_cad()  # USD → CAD taux en temps réel
+FX     = get_usd_to_cad()  # USD → CAD taux en temps réel
+FX_EUR = get_eur_to_cad()  # EUR → CAD taux en temps réel
 
 def to_cad(usd: float) -> str:
     """Convertit USD en CAD et formate."""
@@ -218,6 +227,13 @@ SET_META = {
     "ssp":       (0,   0, "promo",   1.0), # Promo S&S
     # Nouveau set Destined Rivals (sv9)
     "sv9":       (14, 25, "main",    1.1),
+    # ── Mega Evolution ────────────────────────────────────────────────────
+    # Format: (nb_SIR, nb_chase_total, prod_type, print_vol)
+    # Mega Evolution est japonais — tirage limité, peu accessible en Amérique du Nord
+    "me1":    (12, 20, "special", 0.5),  # Mega Evolution Base (sep 2025)
+    "me2":    (10, 16, "special", 0.5),  # Phantasmal Flames (nov 2025)
+    "me2pt5": (8,  14, "special", 0.5),  # Ascended Heroes (jan 2026)
+    "me3":    (10, 18, "special", 0.55), # Perfect Order (mar 2026)
 }
 
 # Accessibilité produit : coût relatif d'obtenir un booster (vs booster box standard)
@@ -321,6 +337,11 @@ def pokeid_to_tcgdex(set_id: str) -> str:
     if m: return f"swsh{m.group(1)}.{m.group(2)}"
     m = re.match(r'^swsh(\d+)$', set_id)
     if m: return f"swsh{m.group(1)}"
+    # me2pt5 → me02.5 | me3 → me03 (Mega Evolution series)
+    m = re.match(r'^me(\d+)pt(\d+)$', set_id)
+    if m: return f"me{int(m.group(1)):02d}.{m.group(2)}"
+    m = re.match(r'^me(\d+)$', set_id)
+    if m: return f"me{int(m.group(1)):02d}"
     return set_id
 
 @st.cache_data(ttl=7200, show_spinner=False)
@@ -368,7 +389,7 @@ def fetch_price_history(tcgdex_card_id: str) -> dict:
     except: return {}
 
 QUERY = (
-    '(set.series:"Scarlet & Violet" OR set.series:"Sword & Shield") '
+    '(set.series:"Scarlet & Violet" OR set.series:"Sword & Shield" OR set.series:"Mega Evolution") '
     '(rarity:"Special Illustration Rare" OR rarity:"Illustration Rare" '
     'OR rarity:"Hyper Rare" OR rarity:"Ultra Rare" OR rarity:"Double Rare" '
     'OR rarity:"ACE SPEC Rare" OR rarity:"Shiny Rare" OR rarity:"Shiny Ultra Rare")'
@@ -377,7 +398,7 @@ DEFAULTS = {"tier":35,"scarcity":25,"psa10":10,"meta":10,"hype":8,"artist":7,"li
 FCOLS = ["f_scarcity_inv","f_tier","f_artist","f_meta","f_hype","f_psa10","f_lifecycle"]
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_data(max_cards=9999, _v=7):  # _v=7 : fetch complet sans limite
+def fetch_data(max_cards=9999, _v=8):  # _v=8 : Mega Evolution + CardMarket fallback
     rows, seen, page = [], set(), 1
     while len(rows) < max_cards:
         size = min(250, max_cards - len(rows))
@@ -399,11 +420,33 @@ def fetch_data(max_cards=9999, _v=7):  # _v=7 : fetch complet sans limite
             tcp = c.get("tcgplayer", {})
             prices = tcp.get("prices", {})
             mkt = None
+            price_source = "tcgplayer"
             for pt in ["holofoil","reverseHolofoil","normal","1stEditionHolofoil"]:
                 if pt in prices and prices[pt].get("market"):
                     mkt = prices[pt]["market"]; break
+            if mkt and mkt > 0:
+                mkt = mkt * get_usd_to_cad()  # USD → CAD
+            else:
+                # Fallback: CardMarket via TCGdex (EUR → CAD)
+                # Pour les sets sans TCGPlayer (Mega Evolution, etc.)
+                sid_tmp = c.get("set", {}).get("id", "")
+                num_tmp = c.get("number", "")
+                tcgdex_tmp = f"{pokeid_to_tcgdex(sid_tmp)}-{num_tmp}"
+                try:
+                    r_cm = requests.get(
+                        f"https://api.tcgdex.net/v2/en/cards/{tcgdex_tmp}",
+                        timeout=5
+                    )
+                    if r_cm.status_code == 200:
+                        cm_data = r_cm.json().get("pricing", {}).get("cardmarket", {}) or {}
+                        eur_price = (cm_data.get("avg7-holo") or cm_data.get("avg7") or
+                                     cm_data.get("trend-holo") or cm_data.get("trend"))
+                        if eur_price and eur_price > 0.5:
+                            mkt = eur_price * get_eur_to_cad()  # EUR → CAD
+                            price_source = "cardmarket"
+                except Exception:
+                    pass
             if not mkt or mkt <= 0: continue
-            mkt = mkt * get_usd_to_cad()  # Convertir en CAD dès le fetch
             rar = c.get("rarity", "Unknown")
             art = c.get("artist", "")
             nm  = c.get("name", "?")
@@ -433,6 +476,7 @@ def fetch_data(max_cards=9999, _v=7):  # _v=7 : fetch complet sans limite
                 "gem_rate": round(get_gem_rate(rar) * 100),
                 "f_lifecycle": lifecycle(rel),
                 "market_price": round(mkt, 2),
+                "price_source": price_source,
                 "tcgplayer_url": tcp.get("url", ""),
                 "image_url": c.get("images", {}).get("small", ""),
                 "tcgdex_id": f"{pokeid_to_tcgdex(sid)}-{num}",
@@ -550,7 +594,10 @@ def card_html(c, sig):
     es = f"+{e:.0f}%" if e >= 0 else f"{e:.0f}%"
     pc = {"gem":"pill-gem","over":"pill-over","fair":"pill-fair"}[sig]
     img = f'<img class="card-img" src="{c["image_url"]}">' if c.get("image_url") else ""
-    tcg = f'<a href="{c["tcgplayer_url"]}" target="_blank" style="color:#7c3aed;font-size:11px;">TCGPlayer ↗</a>' if c.get("tcgplayer_url") else ""
+    tcg_url = c.get("tcgplayer_url","")
+    price_src = c.get("price_source","tcgplayer")
+    src_badge = '<span style="font-size:10px;color:#888;"> (CardMarket EUR→CAD)</span>' if price_src == "cardmarket" else ""
+    tcg = f'<a href="{tcg_url}" target="_blank" style="color:#7c3aed;font-size:11px;">TCGPlayer ↗</a>' if tcg_url else ""
     return f"""
 <div class="card-wrap">
   {img}
@@ -560,7 +607,7 @@ def card_html(c, sig):
     <div class="price-block">
       <div>
         <div class="price-market">Marché</div>
-        <div class="price-mnum">C${c['market_price']:.2f}</div>
+        <div class="price-mnum">C${c['market_price']:.2f}{src_badge}</div>
       </div>
       <div>
         <div class="price-fv-lbl">Fair Value</div>
@@ -670,8 +717,8 @@ if "df" not in st.session_state:
     st.session_state.df = pd.DataFrame()
 
 if fetch_btn and ok:
-    with st.spinner("Chargement... ~45 sec (1275 cartes)"):
-        fetched = fetch_data(_v=7)
+    with st.spinner("Chargement... ~60 sec (S&V + S&S + Mega Evolution)..."):
+        fetched = fetch_data(_v=8)
     if fetched.empty:
         st.error("Aucune carte. Vérifie ta connexion.")
     else:
