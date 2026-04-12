@@ -1,7 +1,7 @@
 """
 =============================================================
- Nasty TCG Dashboard — Streamlit App (v4)
- 7 facteurs, valeur estimee ancree sur le prix reel
+ Nasty TCG Dashboard — Streamlit App (v5)
+ 7 facteurs, poids par defaut Nich, validation 100%
 =============================================================
 """
 
@@ -27,6 +27,9 @@ st.markdown("""
     .gem-badge  { color: #2ecc71; font-size: 15px; font-weight: bold; }
     .over-badge { color: #e74c3c; font-size: 15px; font-weight: bold; }
     .fair-badge { color: #f39c12; font-size: 15px; font-weight: bold; }
+    .total-ok   { color: #2ecc71; font-size: 20px; font-weight: bold; }
+    .total-low  { color: #e67e22; font-size: 20px; font-weight: bold; }
+    .total-high { color: #e74c3c; font-size: 20px; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -34,7 +37,6 @@ st.markdown("""
 # CONSTANTES
 # ─────────────────────────────────────────────
 
-# Pull rates approximatifs par rareté (1 carte sur X packs)
 RARITY_PULL = {
     "Special Illustration Rare": 1/1440,
     "Hyper Rare":                1/360,
@@ -49,7 +51,6 @@ RARITY_PULL = {
     "Rare":                      1/10,
 }
 
-# Tier du Pokémon (popularité / mascotte)
 TIER_MAP = {
     10: ["charizard", "umbreon", "mewtwo", "rayquaza", "lugia"],
     9:  ["pikachu", "eevee", "mew", "gengar", "snorlax", "espeon", "vaporeon"],
@@ -58,7 +59,6 @@ TIER_MAP = {
     6:  ["gyarados", "arcanine", "ninetales", "absol", "flygon"],
 }
 
-# Réputation des artistes illustrateurs (connus dans la communauté TCG)
 ARTIST_TIER = {
     10: ["mika pikazo", "tetsu kayama", "akira komayama"],
     9:  ["ryota murayama", "nagomibana", "sowsow", "5ban graphics"],
@@ -73,6 +73,17 @@ RECENT_SETS_QUERY = (
     'OR rarity:"Hyper Rare" OR rarity:"Ultra Rare" OR rarity:"Double Rare")'
 )
 
+# ── Poids par defaut (Nich) ──
+DEFAULT_WEIGHTS = {
+    "tier":      40,
+    "scarcity":  25,
+    "psa10":     10,
+    "meta":      10,
+    "hype":       5,
+    "artist":     5,
+    "lifecycle":  5,
+}
+
 def get_tier(name: str) -> int:
     name = name.lower()
     for tier, names in TIER_MAP.items():
@@ -85,24 +96,19 @@ def get_artist_score(artist: str) -> float:
     for score, names in ARTIST_TIER.items():
         if any(n in artist for n in names):
             return float(score)
-    return 4.0  # artiste inconnu = score moyen-bas
+    return 4.0
 
 def set_lifecycle_score(release_date_str: str) -> float:
-    """
-    Score de 1 a 10 base sur l'age du set.
-    Set recent (<6 mois) = score eleve (encore en print, hype active)
-    Set vieux (>2 ans) = score bas (out of print, marche stabilise)
-    """
     try:
         parts = release_date_str.split("/")
         rd = date(int(parts[0]), int(parts[1]), int(parts[2]))
         days_old = (date.today() - rd).days
-        if days_old < 90:    return 9.0   # tout neuf
-        if days_old < 180:   return 8.0   # recent
-        if days_old < 365:   return 6.5   # milieu de vie
-        if days_old < 548:   return 5.0   # 1-1.5 ans
-        if days_old < 730:   return 3.5   # 1.5-2 ans
-        return 2.0                         # 2 ans+, out of print / stabilise
+        if days_old < 90:   return 9.0
+        if days_old < 180:  return 8.0
+        if days_old < 365:  return 6.5
+        if days_old < 548:  return 5.0
+        if days_old < 730:  return 3.5
+        return 2.0
     except Exception:
         return 5.0
 
@@ -139,8 +145,8 @@ def fetch_live_data(query: str, max_cards: int = 400, api_key: str = "") -> pd.D
             break
 
         for card in cards:
-            tcgplayer  = card.get("tcgplayer", {})
-            prices     = tcgplayer.get("prices", {})
+            tcgplayer    = card.get("tcgplayer", {})
+            prices       = tcgplayer.get("prices", {})
             market_price = None
             for ptype in ["holofoil", "reverseHolofoil", "normal", "1stEditionHolofoil"]:
                 if ptype in prices and prices[ptype].get("market"):
@@ -155,7 +161,6 @@ def fetch_live_data(query: str, max_cards: int = 400, api_key: str = "") -> pd.D
             release_date = card.get("set", {}).get("releaseDate", "")
             artist       = card.get("artist", "")
 
-            # Compétitivité (meta relevance)
             if legalities.get("standard") == "Legal":
                 meta = 9.0
             elif legalities.get("expanded") == "Legal":
@@ -163,15 +168,12 @@ def fetch_live_data(query: str, max_cards: int = 400, api_key: str = "") -> pd.D
             else:
                 meta = 1.0
 
-            # Social Sentiment / Hype — proxy: vitesse de vente (low/mid/high TCGPlayer)
-            # On utilise le spread entre listed et market comme proxy d'urgence d'achat
-            hype = 5.0  # baseline
+            hype = 5.0
             for ptype in ["holofoil", "reverseHolofoil", "normal"]:
                 if ptype in prices:
                     low = prices[ptype].get("low", 0)
                     mkt = prices[ptype].get("market", 0)
                     if low and mkt and mkt > 0:
-                        # Si low << market => demande forte => hype elevee
                         ratio = low / mkt
                         if ratio < 0.5:   hype = 9.0
                         elif ratio < 0.7: hype = 7.0
@@ -179,8 +181,6 @@ def fetch_live_data(query: str, max_cards: int = 400, api_key: str = "") -> pd.D
                         else:             hype = 3.5
                     break
 
-            # PSA10 Slab Factor — proxy base sur la rareté + prix
-            # Les SIR sont notoriement difficiles a grader (bords, texture)
             slab_difficulty = {
                 "Special Illustration Rare": 8.5,
                 "Illustration Rare":         7.0,
@@ -197,15 +197,13 @@ def fetch_live_data(query: str, max_cards: int = 400, api_key: str = "") -> pd.D
                 "release_date":  release_date,
                 "rarity":        rarity,
                 "artist":        artist,
-                # 7 facteurs
-                "f_scarcity":    pull_rate,           # pull rate brut (inversé = rareté)
+                "f_scarcity":    pull_rate,
                 "f_tier":        float(get_tier(card.get("name", ""))),
                 "f_artist":      get_artist_score(artist),
                 "f_meta":        meta,
                 "f_hype":        hype,
                 "f_psa10":       psa10,
                 "f_lifecycle":   set_lifecycle_score(release_date),
-                # Prix
                 "market_price":  round(market_price, 2),
                 "tcgplayer_url": tcgplayer.get("url", ""),
                 "image_url":     card.get("images", {}).get("small", ""),
@@ -227,30 +225,24 @@ FEATURE_COLS = ["f_scarcity_inv", "f_tier", "f_artist", "f_meta", "f_hype", "f_p
 
 def compute_fair_value(df, weights: dict, gem_thresh: float, over_thresh: float) -> pd.DataFrame:
     df = df.copy()
-
-    # Scarcity: inverser (pull rate petit = rare = bonne chose)
     df["f_scarcity_inv"] = -np.log(df["f_scarcity"])
 
-    # Normaliser tous les facteurs en 0-1
     scaler = MinMaxScaler()
     for col in FEATURE_COLS:
         df[f"{col}_n"] = scaler.fit_transform(df[[col]])
 
-    # Score composite pondéré (0-1)
     norm_cols  = [f"{c}_n" for c in FEATURE_COLS]
     weight_arr = np.array([weights[c] for c in FEATURE_COLS])
     total_w    = weight_arr.sum() or 1.0
 
     df["score"] = df[norm_cols].values.dot(weight_arr) / total_w
 
-    # Regression Ridge: score -> log(prix reel)
-    # => valeur estimee toujours dans la bonne plage de prix
     X = df[["score"]].values
     y = np.log1p(df["market_price"].values)
     model = Ridge(alpha=1.0)
     model.fit(X, y)
 
-    df["Vt"]       = np.expm1(model.predict(X)).round(2)
+    df["Vt"]        = np.expm1(model.predict(X)).round(2)
     df["ecart_pct"] = ((df["Vt"] - df["market_price"]) / df["market_price"] * 100).round(1)
 
     df["Signal"] = df["ecart_pct"].apply(
@@ -278,39 +270,57 @@ with st.sidebar:
         "Clé API PokéTCG (optionnel)", type="password",
         help="Sans clé : 1 000 req/jour. Clé gratuite sur pokemontcg.io/dev"
     )
-    fetch_btn = st.button("🔄 Charger les cartes récentes", type="primary")
 
     st.divider()
-    st.subheader("🎚️ Poids de chaque facteur")
-    st.caption("Ajuste l'importance de chaque variable dans le calcul.")
+    st.subheader("🎚️ Poids des facteurs (total = 100%)")
+    st.caption("Ajuste l'importance de chaque facteur. Le total doit être exactement 100% pour lancer l'analyse.")
 
-    w_scarcity  = st.slider("🔮 Rareté (pull rate)",            0.0, 1.0, 0.25, 0.05)
-    w_tier      = st.slider("⭐ Popularité du Pokémon",          0.0, 1.0, 0.20, 0.05)
-    w_artist    = st.slider("🎨 Réputation de l'artiste",        0.0, 1.0, 0.10, 0.05)
-    w_meta      = st.slider("🏆 Jouabilité compétitive",         0.0, 1.0, 0.15, 0.05)
-    w_hype      = st.slider("🔥 Hype / Sentiment social",        0.0, 1.0, 0.15, 0.05)
-    w_psa10     = st.slider("💎 Difficulté de grading (PSA 10)", 0.0, 1.0, 0.10, 0.05)
-    w_lifecycle = st.slider("📅 Cycle de vie du set",            0.0, 1.0, 0.05, 0.05)
+    w_tier      = st.slider("⭐ Popularité du Pokémon (Character Tier)",  0, 100, DEFAULT_WEIGHTS["tier"],      5)
+    w_scarcity  = st.slider("🔮 Rareté (Scarcity Factor)",                0, 100, DEFAULT_WEIGHTS["scarcity"],  5)
+    w_psa10     = st.slider("💎 Difficulté de grading (Slab Factor)",     0, 100, DEFAULT_WEIGHTS["psa10"],     5)
+    w_meta      = st.slider("🏆 Jouabilité compétitive",                   0, 100, DEFAULT_WEIGHTS["meta"],      5)
+    w_hype      = st.slider("🔥 Hype / Sentiment social",                  0, 100, DEFAULT_WEIGHTS["hype"],      5)
+    w_artist    = st.slider("🎨 Réputation de l'artiste",                  0, 100, DEFAULT_WEIGHTS["artist"],    5)
+    w_lifecycle = st.slider("📅 Cycle de vie du set",                      0, 100, DEFAULT_WEIGHTS["lifecycle"], 5)
 
-    total_w = round(w_scarcity + w_tier + w_artist + w_meta + w_hype + w_psa10 + w_lifecycle, 2)
-    color = "green" if abs(total_w - 1.0) < 0.08 else "orange"
-    st.markdown(f"**Total : :{color}[{total_w}]** *(idéalement = 1.0)*")
+    total_w = w_tier + w_scarcity + w_psa10 + w_meta + w_hype + w_artist + w_lifecycle
+
+    st.divider()
+    if total_w == 100:
+        st.markdown("<div class='total-ok'>✅ Total : 100% — Parfait !</div>", unsafe_allow_html=True)
+        weights_valid = True
+    elif total_w < 100:
+        manque = 100 - total_w
+        st.markdown(f"<div class='total-low'>⚠️ Total : {total_w}% — Il manque {manque}%</div>", unsafe_allow_html=True)
+        weights_valid = False
+    else:
+        surplus = total_w - 100
+        st.markdown(f"<div class='total-high'>🚫 Total : {total_w}% — {surplus}% en trop !</div>", unsafe_allow_html=True)
+        weights_valid = False
+
+    fetch_btn = st.button(
+        "🔄 Lancer l'analyse",
+        type="primary",
+        disabled=not weights_valid,
+        help="Les poids doivent totaliser exactement 100% pour lancer l'analyse."
+    )
 
     st.divider()
     st.subheader("📐 Seuils")
-    gem_thresh  = st.slider("Seuil sous-évalué (+X%)",  0.05, 0.60, 0.15, 0.05)
-    over_thresh = st.slider("Seuil surévalué (-X%)",   -0.60, -0.05, -0.15, 0.05)
+    gem_thresh  = st.slider("Seuil sous-évalué (+X%)",  5, 60, 15, 5)
+    over_thresh = st.slider("Seuil surévalué (-X%)",    5, 60, 15, 5)
 
     st.divider()
     st.subheader("🔍 Filtres prix")
     min_price = st.number_input("Prix minimum ($)", 0, 1000, 5)
     max_price = st.number_input("Prix maximum ($)", 0, 5000, 2000)
 
+
 # ── Session state ──
 if "df_loaded" not in st.session_state:
     st.session_state.df_loaded = pd.DataFrame()
 
-if fetch_btn:
+if fetch_btn and weights_valid:
     with st.spinner("Chargement des cartes SIR / IR / Ultra Rare... ~20 sec"):
         fetched = fetch_live_data(RECENT_SETS_QUERY, max_cards=400, api_key=api_key)
     if fetched.empty:
@@ -322,44 +332,34 @@ if fetch_btn:
 df_raw = st.session_state.df_loaded
 
 if df_raw.empty:
-    st.info("👈 Clique sur **'Charger les cartes récentes'** dans le menu à gauche pour commencer.")
+    st.info("👈 Ajuste les poids à 100% dans le menu, puis clique **'Lancer l'analyse'**.")
     st.markdown("""
 **Les 7 facteurs analysés :**
-| Facteur | Description |
-|---|---|
-| 🔮 Rareté | Probabilité de pull dans un pack (1/1440 pour SIR) |
-| ⭐ Popularité | Mascotte vs Pokémon bulk — Charizard > Lickitung |
-| 🎨 Artiste | Réputation de l'illustrateur dans la communauté |
-| 🏆 Compétitivité | Utilisé dans les top decks de tournoi ? |
-| 🔥 Hype | Demande actuelle — vitesse de vente sur TCGPlayer |
-| 💎 Grading | Difficulté d'obtenir un PSA 10 (SIR = très difficile) |
-| 📅 Cycle de vie | Le set est encore en impression ou déjà retiré ? |
+
+| Facteur | Description | Défaut |
+|---|---|---|
+| ⭐ Popularité | Charizard = 10, Pokémon bulk = 3 | **40%** |
+| 🔮 Rareté | Pull rate réel (1/1440 pour SIR) | **25%** |
+| 💎 Grading | Difficulté d'obtenir un PSA 10 | **10%** |
+| 🏆 Compétitivité | Utilisé dans les top decks ? | **10%** |
+| 🔥 Hype | Demande actuelle — vitesse de vente | **5%** |
+| 🎨 Artiste | Réputation de l'illustrateur | **5%** |
+| 📅 Cycle de vie | Set encore en impression ou retiré ? | **5%** |
     """)
     st.stop()
 
 # ── Calculs ──
-weights = {
-    "f_scarcity_inv_n": w_scarcity,
-    "f_tier_n":         w_tier,
-    "f_artist_n":       w_artist,
-    "f_meta_n":         w_meta,
-    "f_hype_n":         w_hype,
-    "f_psa10_n":        w_psa10,
-    "f_lifecycle_n":    w_lifecycle,
-}
-
-# On passe les poids dans l'ordre de FEATURE_COLS
 weights_ordered = {
-    "f_scarcity_inv": w_scarcity,
-    "f_tier":         w_tier,
-    "f_artist":       w_artist,
-    "f_meta":         w_meta,
-    "f_hype":         w_hype,
-    "f_psa10":        w_psa10,
-    "f_lifecycle":    w_lifecycle,
+    "f_scarcity_inv": w_scarcity / 100,
+    "f_tier":         w_tier     / 100,
+    "f_artist":       w_artist   / 100,
+    "f_meta":         w_meta     / 100,
+    "f_hype":         w_hype     / 100,
+    "f_psa10":        w_psa10    / 100,
+    "f_lifecycle":    w_lifecycle/ 100,
 }
 
-df = compute_fair_value(df_raw, weights_ordered, gem_thresh, over_thresh)
+df = compute_fair_value(df_raw, weights_ordered, gem_thresh / 100, -over_thresh / 100)
 df = df[(df["market_price"] >= min_price) & (df["market_price"] <= max_price)]
 
 # Filtre série
@@ -383,7 +383,7 @@ st.divider()
 
 # ── GEMS ──
 st.subheader("🟢 Bonnes affaires potentielles")
-st.caption("Valeur théorique nettement supérieure au prix du marché — cartes potentiellement sous-évaluées.")
+st.caption("Valeur théorique nettement supérieure au prix du marché.")
 
 if len(gems) > 0:
     cols_per_row = 4
@@ -408,13 +408,12 @@ if len(gems) > 0:
                 if card.get("tcgplayer_url"):
                     st.markdown(f"[Voir sur TCGPlayer]({card['tcgplayer_url']})")
 else:
-    st.info("Aucune bonne affaire détectée avec ces réglages. Essaie de baisser le seuil sous-évalué.")
+    st.info("Aucune bonne affaire détectée. Essaie de baisser le seuil sous-évalué.")
 
 st.divider()
 
 # ── OVERVALUED ──
-with st.expander(f"🔴 Cartes surévaluées ({len(overs)}) — à éviter"):
-    st.caption("Prix du marché nettement supérieur à la valeur théorique.")
+with st.expander(f"🔴 Cartes surévaluées ({len(overs)}) — a eviter"):
     for _, card in overs.head(10).iterrows():
         ca, cb = st.columns([1, 4])
         with ca:
@@ -448,9 +447,9 @@ with tab1:
                    label=signal, color=colors_map.get(signal, "gray"), alpha=0.7, s=55)
     max_val = max(df["market_price"].max(), df["Vt"].max()) * 1.05
     ax.plot([0, max_val], [0, max_val], "k--", lw=0.9, label="Valeur = Prix")
-    ax.set_xlabel("Prix réel du marché ($)")
-    ax.set_ylabel("Valeur théorique estimée ($)")
-    ax.set_title("Au-dessus de la ligne = sous-évaluée | En-dessous = surévaluée")
+    ax.set_xlabel("Prix reel du marche ($)")
+    ax.set_ylabel("Valeur theorique estimee ($)")
+    ax.set_title("Au-dessus de la ligne = sous-evaluee | En-dessous = surevaluee")
     ax.legend()
     st.pyplot(fig)
 
@@ -460,13 +459,13 @@ with tab2:
     bar_colors = [colors_map.get(s, "gray") for s in top20["Signal"]]
     ax2.barh(top20["name"], top20["ecart_pct"], color=bar_colors)
     ax2.axvline(0, color="black", lw=0.8, ls="--")
-    ax2.set_xlabel("Écart entre valeur estimée et prix réel (%)")
-    ax2.set_title("Top 20 — Cartes les plus sous-évaluées")
+    ax2.set_xlabel("Ecart entre valeur estimee et prix reel (%)")
+    ax2.set_title("Top 20 — Cartes les plus sous-evaluees")
     ax2.invert_yaxis()
     st.pyplot(fig2)
 
 with tab3:
-    st.caption("Scores normalisés (0-10) par facteur pour les 15 meilleures opportunités")
+    st.caption("Scores normalisés (0-10) pour les 15 meilleures opportunités")
     top15 = gems.head(15) if len(gems) > 0 else df.head(15)
     factor_labels = {
         "f_scarcity_inv": "Rareté",
@@ -479,7 +478,6 @@ with tab3:
     }
     display_df = top15[["name"] + list(factor_labels.keys())].copy()
     display_df = display_df.rename(columns={**factor_labels, "name": "Carte"})
-    # Normaliser pour affichage
     for col in factor_labels.values():
         if col in display_df.columns:
             mn, mx = display_df[col].min(), display_df[col].max()
@@ -489,7 +487,7 @@ with tab3:
 
 st.divider()
 
-# ── Table complète ──
+# ── Table complete ──
 with st.expander("📋 Toutes les cartes analysées"):
     disp = df[["name", "set", "rarity", "artist", "market_price", "Vt", "ecart_pct", "Signal"]].copy()
     disp.columns = ["Carte", "Set", "Rareté", "Artiste", "Prix ($)", "Valeur estimée ($)", "Écart (%)", "Verdict"]
