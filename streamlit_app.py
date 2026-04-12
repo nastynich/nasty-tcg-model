@@ -311,25 +311,60 @@ def hype(prices):
 # ── Mapping pokemontcg.io set ID → TCGdex set ID ─────────────────────────
 def pokeid_to_tcgdex(set_id: str) -> str:
     import re
+    # sv3pt5 → sv03.5 | sv3 → sv03
     m = re.match(r'^sv(\d+)pt(\d+)$', set_id)
-    if m: return f"sv{int(m.group(1)):02d}.{int(m.group(2))}"
+    if m: return f"sv{int(m.group(1)):02d}.{m.group(2)}"
     m = re.match(r'^sv(\d+)$', set_id)
     if m: return f"sv{int(m.group(1)):02d}"
+    # swsh3pt5 → swsh3.5 | swsh3 → swsh3
     m = re.match(r'^swsh(\d+)pt(\d+)$', set_id)
     if m: return f"swsh{m.group(1)}.{m.group(2)}"
+    m = re.match(r'^swsh(\d+)$', set_id)
+    if m: return f"swsh{m.group(1)}"
     return set_id
 
 @st.cache_data(ttl=7200, show_spinner=False)
 def fetch_price_history(tcgdex_card_id: str) -> dict:
+    """
+    Fetche avg1/avg7/avg30/trend CardMarket + calcule :
+      - momentum_7_30 : progression % avg7 vs avg30 (tendance moyen terme)
+      - momentum_1_7  : progression % avg1 vs avg7  (tendance court terme)
+      - acceleration  : momentum_1_7 - momentum_7_30 (accélération)
+      - trend_vs_avg  : trend vs avg30 (signal sentiment)
+      - hype_score    : score composite 0-10 basé sur les 4 signaux
+    """
     try:
         r = requests.get(f"https://api.tcgdex.net/v2/en/cards/{tcgdex_card_id}", timeout=6)
         if r.status_code != 200: return {}
         cm = r.json().get("pricing", {}).get("cardmarket", {}) or {}
-        avg1, avg7, avg30 = cm.get("avg1"), cm.get("avg7"), cm.get("avg30")
-        if not avg7 or not avg30: return {}
-        vel_7_30 = round((avg7 - avg30) / avg30 * 100, 1)
-        vel_1_7  = round((avg1 - avg7)  / avg7  * 100, 1) if avg1 else None
-        return {"avg7": avg7, "avg30": avg30, "vel_7_30": vel_7_30, "vel_1_7": vel_1_7}
+        # Préférer les prix holo pour les cartes rares
+        avg1  = cm.get("avg1-holo")  or cm.get("avg1")
+        avg7  = cm.get("avg7-holo")  or cm.get("avg7")
+        avg30 = cm.get("avg30-holo") or cm.get("avg30")
+        trend = cm.get("trend-holo") or cm.get("trend")
+        if not avg7 or not avg30 or avg30 <= 0: return {}
+        # ── Momentum (prix réels de ventes CardMarket) ──────────────
+        mom_7_30 = round((avg7  - avg30) / avg30 * 100, 1)
+        mom_1_7  = round((avg1  - avg7)  / avg7  * 100, 1) if avg1 and avg7 > 0 else 0.0
+        accel    = round(mom_1_7 - mom_7_30, 1)
+        trend_vs = round((trend - avg30) / avg30 * 100, 1) if trend and avg30 > 0 else 0.0
+        # ── Hype score composite (0-10) ──────────────────────────────
+        # Positif = demande forte | Négatif = pression vendeuse
+        h = 5.0
+        h += min(2.5, max(-2.5, mom_7_30 / 20))  # contribution momentum moyen
+        h += min(1.5, max(-1.5, mom_1_7  / 15))  # contribution momentum court
+        h += min(1.0, max(-1.0, trend_vs / 20))  # contribution trend
+        hype = round(min(10.0, max(0.0, h)), 1)
+        return {
+            "avg1": avg1, "avg7": avg7, "avg30": avg30, "trend": trend,
+            "vel_7_30": mom_7_30,   # compatibilité rétro
+            "vel_1_7":  mom_1_7,    # compatibilité rétro
+            "momentum_7_30": mom_7_30,
+            "momentum_1_7":  mom_1_7,
+            "acceleration":  accel,
+            "trend_vs_avg":  trend_vs,
+            "hype_score":    hype,
+        }
     except: return {}
 
 QUERY = (
@@ -402,6 +437,13 @@ def fetch_data(max_cards=9999, _v=7):  # _v=7 : fetch complet sans limite
                 "image_url": c.get("images", {}).get("small", ""),
                 "tcgdex_id": f"{pokeid_to_tcgdex(sid)}-{num}",
                 "f_velocity": 5.0,
+                # ── Signaux de momentum (pré-calculés à l'affichage) ──
+                "momentum_7_30": None,
+                "momentum_1_7":  None,
+                "acceleration":  None,
+                "trend_vs_avg":  None,
+                "price_avg7":    None,
+                "price_avg30":   None,
             })
         if len(cards) < size: break
         page += 1
@@ -485,19 +527,23 @@ def run_model(df, w, gt, ot):
 
 
 def _vel_label(tcgdex_id: str, default: float = 5.0) -> str:
-    """Fetch vélocité pour UNE carte (via cache) et retourne un label HTML."""
-    hist = fetch_price_history(tcgdex_id) if tcgdex_id else {}
-    v30  = hist.get("vel_7_30")
-    v7   = hist.get("vel_1_7")
-    score = default
-    if v30 is not None: score += min(2.5, max(-2.5, v30 / 6.0))
-    if v7  is not None: score += min(1.5, max(-1.5, v7  / 10.0))
-    score = round(min(10.0, max(0.0, score)), 1)
-    if   score >= 7.5: return f"🚀 +{score}/10  ({f'+{v30:.1f}%' if v30 else ''})"
-    elif score >= 6.0: return f"📈 {score}/10  ({f'+{v30:.1f}%' if v30 else ''})"
-    elif score >= 4.0: return f"➡️  {score}/10  (stable)"
-    elif score >= 2.5: return f"📉 {score}/10  ({f'{v30:.1f}%' if v30 else ''})"
-    else:              return f"🧊 {score}/10  (chute)"
+    """Fetch momentum CardMarket pour une carte — retourne label HTML."""
+    hist  = fetch_price_history(tcgdex_id) if tcgdex_id else {}
+    score = hist.get("hype_score", default)
+    mom   = hist.get("momentum_7_30")
+    accel = hist.get("acceleration")
+    if mom is not None:
+        sign   = "+" if mom >= 0 else ""
+        detail = f"{sign}{mom:.1f}% (7j vs 30j)"
+        if accel is not None and abs(accel) >= 3:
+            detail += f" {'↑' if accel > 0 else '↓'} accél"
+    else:
+        detail = "données EUR"
+    if   score >= 7.5: return f"🚀 {score}/10 — {detail}"
+    elif score >= 6.0: return f"📈 {score}/10 — {detail}"
+    elif score >= 4.0: return f"➡️  {score}/10 — {detail}"
+    elif score >= 2.5: return f"📉 {score}/10 — {detail}"
+    else:              return f"🧊 {score}/10 — {detail}"
 
 def card_html(c, sig):
     e = c["ecart"]
@@ -530,7 +576,8 @@ def card_html(c, sig):
         <b>Pop:</b> {c['f_tier']:.1f}/10 &nbsp;·&nbsp;
         <b>Méta:</b> {c['f_meta']:.1f}/10 &nbsp;·&nbsp;
         <b>Hype:</b> {c['hype_label']}<br>
-        <b>Vélocité 30j:</b> {_vel_label(c.get("tcgdex_id",""), c.get("f_velocity",5))}<br>
+        <b>Momentum:</b> {_vel_label(c.get("tcgdex_id",""), c.get("f_velocity",5))}<br>
+        <b>Raw→PSA10:</b> ×{round(1 / max(c.get("gem_rate", 5)/100, 0.01) * 0.15, 1)} est. | Gem rate: {c.get("gem_rate","?")}%<br>
         <b>PSA 10 gem rate:</b> {c['gem_rate']:.0f}%<br>
         {tcg}
       </div>
@@ -697,15 +744,67 @@ c4.metric("🔴 Surévaluées",   len(overs))
 c5.metric("R²",               f"{r2:.2f}")
 st.divider()
 
-t1, t2, t3, t4 = st.tabs([
+t1, t2, t3, t4, t5 = st.tabs([
     f"🟢 Sous-évaluées ({len(gems)})",
     f"🔴 Surévaluées ({len(overs)})",
     f"🟡 Prix juste ({len(fair)})",
     "📊 Graphiques",
+    "🔥 Momentum",
 ])
 with t1: grid(gems, "gem")
 with t2: grid(overs, "over")
 with t3: grid(fair, "fair")
+with t5:
+    st.markdown("### 🔥 Top Movers — Momentum CardMarket (EUR)")
+    st.caption("Momentum calculé sur données de ventes réelles CardMarket · avg7 vs avg30 · Lazy load")
+    top_n = st.slider("Nombre de cartes à analyser", 10, 60, 20, 5,
+                      help="Chaque carte fait 1 requête API — 20 cartes ≈ 10 sec")
+    subset = df.head(top_n).copy()
+    prog = st.progress(0, text="Analyse momentum...")
+    results = []
+    for i, (_, row) in enumerate(subset.iterrows()):
+        h = fetch_price_history(row.get("tcgdex_id",""))
+        if h:
+            results.append({
+                "Carte": row["name"],
+                "Set": row["set"],
+                "Rareté": row["rarity"],
+                "Prix (CAD)": f"C${row['market_price']:.2f}",
+                "Avg 7j (EUR)": f"€{h['avg7']:.2f}" if h.get('avg7') else "—",
+                "Avg 30j (EUR)": f"€{h['avg30']:.2f}" if h.get('avg30') else "—",
+                "Momentum 7j/30j": f"{'+' if (h.get('momentum_7_30') or 0)>=0 else ''}{h.get('momentum_7_30',0):.1f}%",
+                "Momentum 1j/7j": f"{'+' if (h.get('momentum_1_7') or 0)>=0 else ''}{h.get('momentum_1_7',0):.1f}%",
+                "Accélération": f"{'+' if (h.get('acceleration') or 0)>=0 else ''}{h.get('acceleration',0):.1f}",
+                "Score": h.get("hype_score", 5.0),
+                "_mom": h.get("momentum_7_30", 0) or 0,
+            })
+        prog.progress((i+1)/top_n, text=f"Analysé {i+1}/{top_n} cartes...")
+    prog.empty()
+    if results:
+        mdf = pd.DataFrame(results).sort_values("_mom", ascending=False).drop(columns=["_mom"])
+        def color_mom(val):
+            if isinstance(val, str) and val.startswith("+"):
+                return "color: #22c55e; font-weight:bold"
+            elif isinstance(val, str) and val.startswith("-"):
+                return "color: #ef4444"
+            return ""
+        st.dataframe(
+            mdf.style.applymap(color_mom, subset=["Momentum 7j/30j","Momentum 1j/7j","Accélération"]),
+            use_container_width=True, hide_index=True
+        )
+        # Mini graphique momentum
+        top5 = pd.DataFrame(results).nlargest(10, "_mom")
+        fig_m, ax_m = plt.subplots(figsize=(10,4), facecolor="#0d0d1a")
+        ax_m.set_facecolor("#12122a")
+        colors_m = ["#22c55e" if v >= 0 else "#ef4444" for v in top5["_mom"]]
+        ax_m.barh(top5["Carte"] + " (" + top5["Set"].str[:10] + ")", top5["_mom"], color=colors_m)
+        ax_m.axvline(0, color="#666", linewidth=0.8)
+        ax_m.set_xlabel("Momentum 7j/30j (%)", color="#aaa")
+        ax_m.tick_params(colors="#aaa", labelsize=8)
+        ax_m.set_title("Top 10 Movers — Momentum (CardMarket EUR)", color="#ddd", fontsize=11)
+        st.pyplot(fig_m)
+    else:
+        st.info("Aucune donnée de momentum disponible pour ces cartes.")
 with t4:
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5), facecolor="#0d0d1a")
     cm = {"gem":"#22c55e","over":"#ef4444","fair":"#f59e0b"}
