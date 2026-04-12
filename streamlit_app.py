@@ -10,9 +10,26 @@ from sklearn.linear_model import Ridge
 import io, time, requests
 from datetime import date
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_usd_to_cad():
+    try:
+        r = requests.get("https://api.exchangerate-api.com/v4/latest/USD", timeout=5)
+        return r.json()["rates"]["CAD"]
+    except:
+        return 1.38  # fallback
+
 st.set_page_config(page_title="The Nasty Model", page_icon="🎴", layout="wide")
 
 AVATAR_URL = "https://base44.app/api/apps/69dae320409ba22186ac9552/files/mp/public/69dae320409ba22186ac9552/fb5969149_60b86a1b8_NastyPP_07.png"
+
+FX = get_usd_to_cad()  # USD → CAD taux en temps réel
+
+def to_cad(usd: float) -> str:
+    """Convertit USD en CAD et formate."""
+    return f"C${usd * FX:.2f}"
+
+def to_cad_raw(usd: float) -> float:
+    return round(usd * FX, 2)
 
 st.markdown("""
 <style>
@@ -454,11 +471,11 @@ def card_html(c, sig):
     <div class="price-block">
       <div>
         <div class="price-market">Marché</div>
-        <div class="price-mnum">${c['market_price']:.2f}</div>
+        <div class="price-mnum">C${round(c['market_price']*FX,2):.2f}</div>
       </div>
       <div>
         <div class="price-fv-lbl">Fair Value</div>
-        <div class="price-fv-num">${c['Vt']:.2f}</div>
+        <div class="price-fv-num">C${round(c['Vt']*FX,2):.2f}</div>
       </div>
     </div>
     <div><span class="ecart-pill {pc}">{es}</span></div>
@@ -497,7 +514,7 @@ with st.sidebar:
       <img src="{AVATAR_URL}">
       <div>
         <div class="sidebar-title">The Nasty Model</div>
-        <div class="sidebar-sub">TCG Fair Value Engine</div>
+        <div class="sidebar-sub">TCG Fair Value Engine · 1 USD = {FX:.4f} C$</div>
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -531,8 +548,10 @@ with st.sidebar:
 
     st.markdown('<hr class="sb-div">', unsafe_allow_html=True)
     st.markdown('<div class="sb-label">Filtres</div>', unsafe_allow_html=True)
-    min_p = st.number_input("Prix min ($)", 0, 1000, 5)
-    max_p = st.number_input("Prix max ($)", 0, 5000, 2000)
+    min_p_cad = st.number_input("Prix min (C$)", 0, 2000, 5)
+    max_p_cad = st.number_input("Prix max (C$)", 0, 8000, 2000)
+    min_p = round(min_p_cad / FX, 2)
+    max_p = round(max_p_cad / FX, 2)
     filt_rar = st.multiselect("Raretés", [
         "Special Illustration Rare","Illustration Rare","Hyper Rare",
         "Ultra Rare","Double Rare","ACE SPEC Rare","Shiny Rare","Shiny Ultra Rare"
@@ -648,7 +667,9 @@ with t4:
 st.divider()
 with st.expander("📋 Tableau complet"):
     disp = df[["name","set","rarity","market_price","Vt","ecart","Signal"]].copy()
-    disp.columns = ["Carte","Set","Rareté","Prix($)","FV($)","Écart(%)","Signal"]
+    disp["market_price"] = (disp["market_price"] * FX).round(2)
+    disp["Vt"] = (disp["Vt"] * FX).round(2)
+    disp.columns = ["Carte","Set","Rareté","Prix(C$)","FV(C$)","Écart(%)","Signal"]
     st.dataframe(disp.sort_values("Écart(%)", ascending=False),
                  use_container_width=True, hide_index=True)
 
