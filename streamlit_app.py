@@ -836,7 +836,7 @@ with t5:
                 return "color: #ef4444"
             return ""
         st.dataframe(
-            mdf.style.applymap(color_mom, subset=["Momentum 7j/30j","Momentum 1j/7j","Accélération"]),
+            mdf.style.map(color_mom, subset=["Momentum 7j/30j","Momentum 1j/7j","Accélération"]),
             use_container_width=True, hide_index=True
         )
         # Mini graphique momentum
