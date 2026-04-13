@@ -251,6 +251,29 @@ div[data-testid="stToolbar"] { display: none !important; }
 .gap-neg { font-size: 14px; font-weight: 700; color: #ef4444; }
 .gap-neu { font-size: 14px; font-weight: 600; color: #5a5a7a; }
 
+/* ── Price range inline ── */
+.price-range-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #12121e;
+    border: 1px solid #1e1e30;
+    border-radius: 8px;
+    padding: 6px 14px;
+    margin-left: auto;
+    white-space: nowrap;
+}
+.price-range-label {
+    font-size: 10px; font-weight: 700;
+    color: #5a5a7a; text-transform: uppercase;
+    letter-spacing: 0.6px;
+}
+.price-range-val {
+    font-size: 13px; font-weight: 700;
+    color: #d4a017;
+}
+.price-range-sep { color: #3a3a55; font-size: 12px; }
+
 /* ── Load more ── */
 .stButton > button {
     background: #12121e !important;
@@ -516,6 +539,8 @@ def main():
     if "sort_asc" not in ss: ss.sort_asc = False
     if "lb_limit" not in ss: ss.lb_limit = 50
     if "search_q" not in ss: ss.search_q = ""
+    if "price_min"  not in ss: ss.price_min = 0
+    if "price_max"  not in ss: ss.price_max = 9999
 
     ALL_SERIES = ["Scarlet & Violet", "Sword & Shield", "Mega Evolution"]
     ALL_RARITY = ["Special Illustration Rare", "Illustration Rare", "Hyper Rare",
@@ -554,19 +579,42 @@ def main():
     """, unsafe_allow_html=True)
 
     # ── STATS BAR ────────────────────────────────────────────────────────────
+    price_floor = int(df["market_price"].min()) if not df.empty else 0
+    price_ceil  = int(df["market_price"].max()) + 1 if not df.empty else 9999
+    if ss.price_max == 9999: ss.price_max = price_ceil
     n_total = len(df)
     n_gem   = (df["Signal"] == "gem").sum()
     n_over  = (df["Signal"] == "over").sum()
     n_fair  = (df["Signal"] == "fair").sum()
 
-    st.markdown(f"""
-    <div class="stats-bar">
-        <div class="stat-pill gold"><b>{n_total}</b> cartes</div>
-        <div class="stat-pill green"><b>{n_gem}</b> sous-évaluées</div>
-        <div class="stat-pill red"><b>{n_over}</b> surévaluées</div>
-        <div class="stat-pill"><b>{n_fair}</b> prix juste</div>
-    </div>
-    """, unsafe_allow_html=True)
+    # Stats pills + price range sur la même ligne
+    cols_bar = st.columns([1, 1, 1, 1, 0.1, 1.4])
+    with cols_bar[0]:
+        st.markdown(f'<div class="stat-pill gold"><b>{n_total}</b> cartes</div>', unsafe_allow_html=True)
+    with cols_bar[1]:
+        st.markdown(f'<div class="stat-pill green"><b>{n_gem}</b> sous-évaluées</div>', unsafe_allow_html=True)
+    with cols_bar[2]:
+        st.markdown(f'<div class="stat-pill red"><b>{n_over}</b> surévaluées</div>', unsafe_allow_html=True)
+    with cols_bar[3]:
+        st.markdown(f'<div class="stat-pill"><b>{n_fair}</b> prix juste</div>', unsafe_allow_html=True)
+    with cols_bar[4]:
+        st.markdown('<div style="height:36px;border-left:1px solid #1e1e30;margin-top:2px;"></div>', unsafe_allow_html=True)
+    with cols_bar[5]:
+        st.markdown('<div class="price-range-label" style="margin-bottom:2px;">Prix C$</div>', unsafe_allow_html=True)
+        pr_cols = st.columns([1, 0.2, 1])
+        with pr_cols[0]:
+            new_min = st.number_input("", min_value=0, max_value=price_ceil, value=ss.price_min,
+                                      step=5, key="ni_min", label_visibility="collapsed")
+        with pr_cols[1]:
+            st.markdown('<div style="text-align:center;color:#3a3a55;padding-top:6px;">—</div>', unsafe_allow_html=True)
+        with pr_cols[2]:
+            new_max = st.number_input("", min_value=0, max_value=price_ceil, value=ss.price_max,
+                                      step=5, key="ni_max", label_visibility="collapsed")
+        if new_min != ss.price_min or new_max != ss.price_max:
+            ss.price_min = new_min
+            ss.price_max = new_max
+            ss.lb_limit  = 50
+            st.rerun()
 
     # ── SEARCH ───────────────────────────────────────────────────────────────
     search_q = st.text_input("", placeholder="🔍  Rechercher une carte, un set...", key="ti_search", label_visibility="collapsed")
@@ -574,6 +622,7 @@ def main():
 
     # ── FILTER & SORT ────────────────────────────────────────────────────────
     df_f = df[df["series"].isin(ALL_SERIES) & df["rarity"].isin(ALL_RARITY)].copy()
+    df_f = df_f[(df_f["market_price"] >= ss.price_min) & (df_f["market_price"] <= ss.price_max)]
     if search_q:
         q = search_q.lower()
         df_f = df_f[df_f["name"].str.lower().str.contains(q) | df_f["set"].str.lower().str.contains(q)]
