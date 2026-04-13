@@ -1,28 +1,28 @@
 """
-Nasty TCG Dashboard — v11 (PokeDataDadGuy model)
-
-Architecture:
-  Supply  → Pull Cost Score   (pack cost to pull a specific card)
-  Demand  → Desirability Index (weighted: Character 45% + Art/Hype 45% + Universal 10%)
-  Model   → Ridge regression log(price) ~ pull_cost + desirability
-  Output  → Expected Price vs Market Price → Under/Overvalued signal
+Nasty TCG Dashboard — v12 (Clean screener UI)
 """
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.linear_model import Ridge
-import time, requests, re
-from datetime import date
+import requests
+import time
+import sys, os
 
-# ── FX ───────────────────────────────────────────────────────────────────────
+sys.path.insert(0, os.path.dirname(__file__))
+
+# ── PAGE CONFIG ───────────────────────────────────────────────────────────────
+st.set_page_config(page_title="The Nasty Model", page_icon="🎴", layout="wide")
+
+AVATAR_URL = "https://base44.app/api/apps/69dae320409ba22186ac9552/files/mp/public/69dae320409ba22186ac9552/fb5969149_60b86a1b8_NastyPP_07.png"
+
+# ── FX ────────────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_usd_to_cad():
     try:
         r = requests.get("https://api.exchangerate-api.com/v4/latest/USD", timeout=5)
         return r.json()["rates"]["CAD"]
     except:
-        return 1.38
+        return 1.39
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_eur_to_cad():
@@ -30,128 +30,269 @@ def get_eur_to_cad():
         r = requests.get("https://api.exchangerate-api.com/v4/latest/EUR", timeout=5)
         return r.json()["rates"]["CAD"]
     except:
-        return 1.62
-
-st.set_page_config(page_title="The Nasty Model", page_icon="🎴", layout="wide")
-AVATAR_URL = "https://base44.app/api/apps/69dae320409ba22186ac9552/files/mp/public/69dae320409ba22186ac9552/fb5969149_60b86a1b8_NastyPP_07.png"
+        return 1.52
 
 FX     = get_usd_to_cad()
 FX_EUR = get_eur_to_cad()
 
-def fmt_cad(cad: float) -> str:
-    return f"C${cad:.2f}"
+def fmt_cad(v): return f"C${v:.2f}"
 
-# ── CSS ──────────────────────────────────────────────────────────────────────
+# ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-html, body, * { font-family: 'Inter', sans-serif !important; }
+*, html, body { font-family: 'Inter', sans-serif !important; }
 
-section[data-testid="stSidebar"] { background:#0d0d1a !important; }
-section[data-testid="stSidebar"] * { color:#e2e8f0 !important; }
-.stApp, .block-container { background:#0f0f1e !important; color:#e2e8f0; }
-h1,h2,h3,h4 { color:#fff !important; }
+/* ── App background ── */
+.stApp { background: #0a0a0f !important; }
+.block-container { background: #0a0a0f !important; padding-top: 1.5rem !important; max-width: 1200px !important; }
 
-.card-box {
-    background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);
-    border:1px solid #2d2d50; border-radius:16px; padding:16px;
-    margin-bottom:14px; display:flex; gap:14px; align-items:flex-start;
-    transition:border-color .2s;
+/* ── Sidebar ── */
+section[data-testid="stSidebar"] {
+    background: #0d0d16 !important;
+    border-right: 1px solid #1e1e30 !important;
 }
-.card-box:hover { border-color:#7c3aed; }
-.card-img { width:90px; border-radius:8px; flex-shrink:0; }
-.card-body { flex:1; min-width:0; }
-.card-name { font-size:15px; font-weight:700; color:#fff; margin-bottom:2px; }
-.card-sub  { font-size:11px; color:#8892b0; margin-bottom:6px; }
-.card-price { font-size:22px; font-weight:800; color:#fff; }
-.card-vt   { font-size:13px; color:#a0aec0; margin-top:2px; }
-.pill {
-    display:inline-block; padding:3px 10px; border-radius:20px;
-    font-size:11px; font-weight:700; letter-spacing:.5px; margin-top:6px;
-}
-.pill-gem  { background:#064e3b; color:#34d399; border:1px solid #34d399; }
-.pill-over { background:#4c0519; color:#fb7185; border:1px solid #fb7185; }
-.pill-fair { background:#1e1b4b; color:#a5b4fc; border:1px solid #a5b4fc; }
-.pill-source { background:#1e293b; color:#64748b; border:1px solid #334155;
-               font-size:9px; padding:2px 7px; margin-left:4px; }
+section[data-testid="stSidebar"] > div { padding-top: 0 !important; }
 
-.sidebar-avatar { text-align:center; padding:12px 0 4px; }
-.sidebar-avatar img { width:72px; height:72px; border-radius:50%;
-    border:2px solid #7c3aed; object-fit:cover; }
-.sidebar-title { text-align:center; font-size:16px; font-weight:800;
-    color:#fff; margin:6px 0 2px; }
-.sidebar-sub   { text-align:center; font-size:10px; color:#8892b0; }
-.sb-label { font-size:11px; font-weight:600; color:#7c3aed;
-    text-transform:uppercase; letter-spacing:.8px; margin:14px 0 4px; }
-.metric-box {
-    background:#1a1a2e; border:1px solid #2d2d50; border-radius:10px;
-    padding:12px 16px; text-align:center;
-}
-.metric-val { font-size:24px; font-weight:800; color:#7c3aed; }
-.metric-lbl { font-size:11px; color:#8892b0; margin-top:2px; }
+/* ── Hide default streamlit chrome ── */
+#MainMenu, footer, header { visibility: hidden !important; }
+.stDeployButton { display: none !important; }
+div[data-testid="stToolbar"] { display: none !important; }
 
-div[data-testid="stExpander"] { background:#1a1a2e !important;
-    border:1px solid #2d2d50 !important; border-radius:10px; }
+/* ── Sidebar avatar block ── */
+.sb-profile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 28px 16px 20px;
+    border-bottom: 1px solid #1e1e30;
+    margin-bottom: 8px;
+}
+.sb-avatar {
+    width: 68px; height: 68px;
+    border-radius: 50%;
+    border: 2px solid #d4a017;
+    object-fit: cover;
+    margin-bottom: 10px;
+}
+.sb-name {
+    font-size: 15px; font-weight: 800;
+    color: #ffffff; letter-spacing: 0.3px;
+    margin-bottom: 3px;
+}
+.sb-sub {
+    font-size: 10px; color: #5a5a7a;
+    letter-spacing: 0.5px;
+}
+.sb-rate {
+    font-size: 11px; color: #d4a017;
+    margin-top: 4px; font-weight: 600;
+}
 
-/* ══ LEADERBOARD ══ */
-.lb-row {
-    display:flex; align-items:center; gap:0;
-    background:#13132a; border:1px solid #1e1e3a;
-    border-radius:12px; margin-bottom:8px;
-    padding:10px 16px; transition:background .15s;
+/* ── Header ── */
+.page-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #1e1e30;
 }
-.lb-row:hover { background:#1a1a38; border-color:#7c3aed55; }
-.lb-rank {
-    font-size:18px; font-weight:800; color:#4a4a70;
-    width:36px; flex-shrink:0; text-align:center;
+.page-header img {
+    width: 44px; height: 44px;
+    border-radius: 50%; border: 2px solid #d4a017;
+    object-fit: cover;
 }
-.lb-rank.top1 { color:#f5c842; }
-.lb-rank.top2 { color:#c0c0c0; }
-.lb-rank.top3 { color:#cd7f32; }
-.lb-img { width:56px; height:56px; object-fit:contain;
-    border-radius:6px; flex-shrink:0; margin:0 12px; }
-.lb-info { flex:1; min-width:0; }
-.lb-name { font-size:14px; font-weight:700; color:#fff;
-    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.lb-sub  { font-size:11px; color:#4a5568; margin-top:1px; }
-.lb-badges { display:flex; gap:8px; align-items:center; flex-shrink:0; }
-.badge {
-    padding:5px 12px; border-radius:20px; font-size:12px;
-    font-weight:700; white-space:nowrap;
+.page-title {
+    font-size: 22px; font-weight: 800;
+    color: #ffffff; letter-spacing: -0.3px;
 }
-.badge-price { background:#0f172a; color:#e2e8f0; border:1px solid #334155; }
-.badge-gem   { background:#052e16; color:#4ade80; border:1px solid #16a34a; }
-.badge-over  { background:#2d0a0a; color:#f87171; border:1px solid #b91c1c; }
-.badge-fair  { background:#1e1b4b; color:#818cf8; border:1px solid #4338ca; }
-.badge-demand{ background:#1a103a; color:#a78bfa; border:1px solid #7c3aed; font-size:11px; }
-.badge-gap-pos { color:#4ade80; font-size:13px; font-weight:800; min-width:52px; text-align:right; }
-.badge-gap-neg { color:#f87171; font-size:13px; font-weight:800; min-width:52px; text-align:right; }
-.badge-gap-neu { color:#818cf8; font-size:13px; font-weight:800; min-width:52px; text-align:right; }
+.page-sub {
+    font-size: 11px; color: #5a5a7a; margin-top: 2px;
+}
+
+/* ── Stats bar ── */
+.stats-bar {
+    display: flex; gap: 12px;
+    margin-bottom: 18px;
+}
+.stat-pill {
+    background: #12121e;
+    border: 1px solid #1e1e30;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 12px; color: #8888aa;
+    display: flex; align-items: center; gap: 6px;
+}
+.stat-pill b { color: #fff; font-size: 15px; font-weight: 700; }
+.stat-pill.gold b { color: #d4a017; }
+.stat-pill.green b { color: #22c55e; }
+.stat-pill.red b { color: #ef4444; }
+
+/* ── Search bar ── */
+.stTextInput input {
+    background: #12121e !important;
+    border: 1px solid #2a2a40 !important;
+    border-radius: 8px !important;
+    color: #fff !important;
+    font-size: 13px !important;
+    padding: 8px 14px !important;
+}
+.stTextInput input:focus {
+    border-color: #d4a017 !important;
+    box-shadow: 0 0 0 2px rgba(212,160,23,0.15) !important;
+}
+
+/* ── Table header ── */
+.table-header {
+    display: grid;
+    grid-template-columns: 44px 80px 1fr 110px 110px 110px 110px;
+    gap: 0;
+    padding: 8px 16px;
+    background: #0d0d16;
+    border: 1px solid #1e1e30;
+    border-radius: 10px 10px 0 0;
+    margin-bottom: 1px;
+    align-items: center;
+}
+.th {
+    font-size: 10px; font-weight: 700;
+    color: #5a5a7a; text-transform: uppercase;
+    letter-spacing: 0.8px;
+    cursor: pointer;
+    user-select: none;
+    padding: 2px 4px;
+}
+.th:hover { color: #d4a017; }
+.th.active { color: #d4a017; }
+.th-right { text-align: right; }
+.th-center { text-align: center; }
+
+/* ── Table row ── */
+.tcg-row {
+    display: grid;
+    grid-template-columns: 44px 80px 1fr 110px 110px 110px 110px;
+    gap: 0;
+    padding: 8px 16px;
+    background: #0f0f1a;
+    border: 1px solid #1a1a28;
+    border-top: none;
+    align-items: center;
+    transition: background 0.12s;
+}
+.tcg-row:hover { background: #14142a; border-color: #d4a01722; }
+.tcg-row:last-child { border-radius: 0 0 10px 10px; }
+
+/* ── Row cells ── */
+.cell-rank {
+    font-size: 12px; font-weight: 700;
+    color: #3a3a55;
+    text-align: center;
+}
+.cell-rank.top1 { color: #ffd700; }
+.cell-rank.top2 { color: #c0c0c0; }
+.cell-rank.top3 { color: #cd7f32; }
+
+.cell-img { display: flex; align-items: center; }
+.cell-img img {
+    width: 64px; border-radius: 6px;
+    border: 1px solid #1e1e30;
+    transition: transform 0.2s;
+}
+.tcg-row:hover .cell-img img { transform: scale(1.06); }
+
+.cell-info { padding: 0 8px; min-width: 0; }
+.cell-name {
+    font-size: 14px; font-weight: 700;
+    color: #ffffff; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+}
+.cell-sub {
+    font-size: 10px; color: #5a5a7a;
+    white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; margin-top: 2px;
+}
+
+.cell-num {
+    font-size: 14px; font-weight: 600;
+    color: #ccccdd; text-align: right;
+    padding-right: 8px;
+}
+.cell-num.price { color: #ffffff; font-weight: 700; }
+
+.cell-demand { text-align: right; padding-right: 8px; }
+.demand-bar {
+    width: 100%; height: 4px;
+    background: #1e1e30; border-radius: 2px;
+    margin-top: 3px;
+}
+.demand-fill {
+    height: 4px; border-radius: 2px;
+    background: linear-gradient(90deg, #d4a017, #f5cc50);
+}
+.demand-pct {
+    font-size: 12px; font-weight: 700;
+    color: #d4a017; text-align: right;
+}
+
+.cell-signal { text-align: center; }
+.sig-gem  { display: inline-block; padding: 3px 10px; border-radius: 20px;
+            background: #052e1c; color: #22c55e; border: 1px solid #22c55e44;
+            font-size: 10px; font-weight: 700; letter-spacing: 0.4px; }
+.sig-over { display: inline-block; padding: 3px 10px; border-radius: 20px;
+            background: #2e0508; color: #ef4444; border: 1px solid #ef444444;
+            font-size: 10px; font-weight: 700; letter-spacing: 0.4px; }
+.sig-fair { display: inline-block; padding: 3px 10px; border-radius: 20px;
+            background: #1a1a2e; color: #8888cc; border: 1px solid #8888cc44;
+            font-size: 10px; font-weight: 700; letter-spacing: 0.4px; }
+
+.cell-gap { text-align: right; padding-right: 4px; }
+.gap-pos { font-size: 14px; font-weight: 700; color: #22c55e; }
+.gap-neg { font-size: 14px; font-weight: 700; color: #ef4444; }
+.gap-neu { font-size: 14px; font-weight: 600; color: #5a5a7a; }
+
+/* ── Load more ── */
+.stButton > button {
+    background: #12121e !important;
+    border: 1px solid #2a2a40 !important;
+    color: #8888aa !important;
+    border-radius: 8px !important;
+    font-size: 12px !important;
+    width: 100%;
+    padding: 8px !important;
+    transition: all 0.15s !important;
+}
+.stButton > button:hover {
+    border-color: #d4a017 !important;
+    color: #d4a017 !important;
+    background: #12120a !important;
+}
+
+/* ── Divider ── */
+hr { border-color: #1e1e30 !important; margin: 8px 0 !important; }
+
 </style>
 """, unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════════════
-# DATA: Rarity pull rates (packs per hit for rarity tier)
-# ═══════════════════════════════════════════════════════════════════
-# packs_per_rarity_hit = 1 / pull_rate_for_that_tier
+# ── DONNÉES / SCORING ─────────────────────────────────────────────────────────
+
+from pokemon_popularity import get_popularity_score
+from meta_scores import get_meta_score
+
 RARITY_PACKS = {
-    "Special Illustration Rare": 180,   # ~1 per 180 packs
-    "Illustration Rare":          90,   # ~1 per 90 packs
-    "Hyper Rare":                200,   # ~1 per 200 packs (gold cards)
-    "Ultra Rare":                 72,   # ~1 per 72 packs
-    "Double Rare":                18,   # ~1 per 18 packs
+    "Special Illustration Rare": 180,
+    "Illustration Rare":          90,
+    "Hyper Rare":                200,
+    "Ultra Rare":                 72,
+    "Double Rare":                18,
     "ACE SPEC Rare":              72,
     "Shiny Rare":                 54,
     "Shiny Ultra Rare":          180,
 }
 
-# Number of cards in that rarity tier within the set
-# (nb chase cards competing for that slot)
-# SET_META: (nb_SIR, nb_IR, nb_UR, nb_DR, prod_type, pack_price_usd)
 SET_META = {
-    # ── Scarlet & Violet ─────────────────────────────────────────────────
     "sv9":    (10, 15, 5, 20, "main",    4.5),
-    "sv8pt5": (20, 30, 8, 25, "special", 5.5),  # Prismatic Evolutions
+    "sv8pt5": (20, 30, 8, 25, "special", 5.5),
     "sv8":    (12, 20, 6, 18, "main",    4.5),
     "sv7":    (10, 18, 5, 18, "main",    4.5),
     "sv6pt5": (15, 22, 6, 20, "special", 5.5),
@@ -164,235 +305,82 @@ SET_META = {
     "sv2":    (12, 18, 5, 16, "main",    4.5),
     "sv1":    (10, 16, 5, 15, "main",    4.0),
     "svp":    (0,  0,  0,  0, "promo",   0.0),
-    # ── Sword & Shield ────────────────────────────────────────────────────
-    "swsh12pt5": (0, 0, 20, 30, "special", 5.5),  # Crown Zenith
-    "swsh12":    (0, 0, 10, 18, "main",    4.0),
-    "swsh11":    (0, 0,  8, 15, "main",    4.0),
-    "swsh10":    (0, 0,  8, 14, "main",    4.0),
-    "swsh9":     (0, 0,  7, 13, "main",    4.0),
-    "swsh8":     (0, 0,  6, 11, "main",    4.0),
-    "swsh7":     (0, 0,  5, 10, "main",    4.0),
-    "swsh6":     (0, 0,  4,  8, "main",    4.0),
-    "swsh5":     (0, 0,  4,  8, "main",    4.0),
-    "swsh45":    (0, 0, 12, 20, "special", 5.5),  # Shining Fates
-    "swsh4":     (0, 0,  3,  7, "main",    4.0),
-    "swsh35":    (0, 0,  8, 12, "special", 5.5),  # Champion Path
-    "swsh3":     (0, 0,  3,  6, "main",    4.0),
-    "swsh2":     (0, 0,  3,  6, "main",    4.0),
-    "swsh1":     (0, 0,  3,  5, "main",    4.0),
-    "ssp":       (0, 0,  0,  0, "promo",   0.0),
-    # ── Mega Evolution ────────────────────────────────────────────────────
-    "me1":    (12, 20, 6, 18, "special", 6.5),  # Japanese import
-    "me2":    (10, 16, 5, 16, "special", 6.5),
-    "me2pt5": (8,  14, 4, 14, "special", 6.5),
-    "me3":    (10, 18, 5, 16, "special", 6.5),
+    "swsh12pt5": (15, 22, 6, 20, "special", 5.0),
+    "swsh12":    (10, 18, 5, 18, "main",    4.0),
+    "swsh11":    (10, 16, 5, 16, "main",    4.0),
+    "swsh10":    (8,  14, 4, 14, "main",    4.0),
+    "swsh9":     (8,  14, 4, 14, "main",    4.0),
+    "swsh8":     (8,  12, 4, 12, "main",    4.0),
+    "swsh7":     (6,  10, 4, 10, "main",    4.0),
+    "swsh6":     (6,  10, 3, 10, "main",    4.0),
+    "swsh5":     (6,   8, 3,  8, "main",    4.0),
+    "swsh4":     (6,   8, 3,  8, "main",    4.0),
+    "swsh35":    (8,  12, 4, 10, "special", 5.0),
+    "swsh3":     (5,   8, 3,  8, "main",    4.0),
+    "swsh2":     (5,   8, 3,  8, "main",    4.0),
+    "swsh1":     (4,   6, 3,  6, "main",    4.0),
+    "swshp":     (0,   0, 0,  0, "promo",   0.0),
+    "mcd19":     (0,   0, 0,  0, "promo",   0.0),
+    "mcd20":     (0,   0, 0,  0, "promo",   0.0),
+    "mcd21":     (0,   0, 0,  0, "promo",   0.0),
+    "mcd22":     (0,   0, 0,  0, "promo",   0.0),
 }
 DEFAULT_META = (10, 15, 5, 15, "main", 4.5)
 
-# ── Set Hype Score (1–10) ────────────────────────────────────────────────────
-# Mesure la hype communautaire + valeur perçue du set indépendamment des cartes
-# Sources: ventes totales, réputation, demande longue durée, sets "nostalgiques"
 SET_HYPE = {
-    # Iconic / all-time high demand
-    "sv3pt5":    9.8,  # 151 — THE most hyped modern set
-    "sv8pt5":    9.5,  # Prismatic Evolutions — sold out worldwide
-    "swsh45":    9.0,  # Shining Fates — still heavily sought
-    "swsh12pt5": 8.5,  # Crown Zenith — strong chase pool
-    "sv4pt5":    8.5,  # Paldean Fates
-    "sv6pt5":    8.0,  # Shrouded Fable
-    # Strong sets
-    "sv9":       8.0,  # Surging Sparks — Pikachu ex hype
-    "sv7":       7.5,  # Stellar Crown
-    "sv8":       7.0,  # Twilight Masquerade
-    "sv6":       7.0,  # Mask of Change
-    "sv5":       6.5,  # Temporal Forces
-    "sv4":       6.5,  # Paradox Rift
-    "sv3":       7.5,  # Obsidian Flames — Charizard ex
-    "sv2":       6.5,  # Paldea Evolved
-    "sv1":       6.0,  # Scarlet & Violet base
-    # SWSH main sets
-    "swsh12":    6.5,  # Silver Tempest
-    "swsh11":    6.0,  # Lost Origin
-    "swsh10":    6.0,  # Astral Radiance
-    "swsh9":     5.5,  # Brilliant Stars
-    "swsh8":     5.5,  # Fusion Strike
-    "swsh7":     5.0,  # Evolving Skies
-    "swsh6":     5.0,  # Chilling Reign
-    "swsh5":     5.0,  # Battle Styles
-    "swsh4":     5.0,  # Vivid Voltage
-    "swsh35":    7.0,  # Champion's Path — Charizard V holo
-    "swsh3":     4.5,  # Darkness Ablaze
-    "swsh2":     4.5,  # Rebel Clash
-    "swsh1":     5.0,  # Sword & Shield base
-    # Mega Evolution (Japanese import — collector niche)
-    "me1":       7.5,
-    "me2":       7.0,
-    "me2pt5":    7.5,
-    "me3":       7.0,
+    "sv8pt5": 9.5, "sv3pt5": 8.5, "sv6pt5": 8.0, "sv4pt5": 7.5,
+    "sv9": 8.0, "sv8": 7.5, "sv7": 7.0, "sv6": 7.0, "sv5": 7.5,
+    "sv4": 7.0, "sv3": 7.0, "sv2": 6.5, "sv1": 6.5,
+    "swsh12pt5": 8.5, "swsh12": 7.0, "swsh11": 6.5, "swsh10": 6.5,
+    "swsh9": 6.0, "swsh8": 6.0, "swsh7": 5.5, "swsh6": 5.5,
+    "swsh5": 5.0, "swsh4": 5.0, "swsh35": 6.0, "swsh3": 5.0,
+    "swsh2": 4.5, "swsh1": 4.5,
 }
 
-def get_set_hype(sid: str) -> float:
-    """Set Hype Score 1–10. Default 5.0 pour les sets sans score défini."""
-    return SET_HYPE.get(sid, 5.0)
-
-# ── Gem Rate (PSA 10 difficulty) ─────────────────────────────────────────────
-# % de cartes de cette rareté qui obtiennent PSA 10 (données population réelles)
-# Plus c'est rare d'avoir un 10 → plus la carte gradée vaut une prime
 GEM_RATE = {
-    "Special Illustration Rare": 0.42,   # Full art textured — difficile
-    "Illustration Rare":         0.55,
-    "Hyper Rare":                0.38,   # Gold cards — très sensibles aux scratches
-    "Ultra Rare":                0.60,
-    "Double Rare":               0.65,
-    "ACE SPEC Rare":             0.58,
-    "Shiny Rare":                0.50,
-    "Shiny Ultra Rare":          0.45,
+    "Special Illustration Rare": 0.62,
+    "Illustration Rare": 0.68,
+    "Hyper Rare": 0.55,
+    "Ultra Rare": 0.72,
+    "Double Rare": 0.78,
+    "ACE SPEC Rare": 0.70,
+    "Shiny Rare": 0.65,
+    "Shiny Ultra Rare": 0.58,
 }
-def get_gem_rate(rarity: str) -> float:
-    """Retourne un score 1–10 : plus le gem rate est BAS, plus le score est HAUT (prime de difficulté)."""
-    rate = GEM_RATE.get(rarity, 0.55)
-    # Inverser: gem rate 0.38 → score 8.5 | gem rate 0.65 → score 4.0
-    score = 10.0 - (rate - 0.30) / (0.70 - 0.30) * 7.0
-    return round(float(np.clip(score, 1.0, 10.0)), 2)
 
-# ── Set Age Score ─────────────────────────────────────────────────────────────
-def get_set_age_score(release_date: str) -> float:
-    """
-    Courbe en U : prime de nouveauté + prime de nostalgie, creux à 12-18 mois.
-    release_date format: YYYY/MM/DD ou YYYY-MM-DD
-    Score 1–10.
-    """
-    try:
-        rd = release_date.replace("/", "-")[:10]
-        from datetime import date as _date
-        rel = _date.fromisoformat(rd)
-        months_old = (date.today() - rel).days / 30.44
-    except:
-        return 5.0  # fallback
+def set_hype_score(sid): return SET_HYPE.get(sid, 5.0)
+def get_set_meta(sid): return SET_META.get(sid, DEFAULT_META)
 
-    # Courbe en U : min à ~15 mois
-    if months_old <= 3:
-        score = 9.0  # tout nouveau — hype launch
-    elif months_old <= 12:
-        score = 9.0 - (months_old - 3) / 9.0 * 3.5   # 9.0 → 5.5
-    elif months_old <= 20:
-        score = 5.5 - (months_old - 12) / 8.0 * 1.5  # 5.5 → 4.0 (creux)
-    elif months_old <= 36:
-        score = 4.0 + (months_old - 20) / 16.0 * 2.5 # 4.0 → 6.5 (nostalgie)
-    else:
-        score = 6.5 + min(2.0, (months_old - 36) / 24.0 * 2.0)  # 6.5 → 8.5 (vintage)
-
-    return round(float(np.clip(score, 1.0, 10.0)), 2)
-
-def get_set_meta(sid: str):
-    return SET_META.get(sid, DEFAULT_META)
-
-def n_cards_in_rarity(sid: str, rarity: str) -> int:
-    meta = get_set_meta(sid)
-    r = rarity
-    if r == "Special Illustration Rare": return max(1, meta[0])
-    if r == "Illustration Rare":         return max(1, meta[1])
-    if r in ("Hyper Rare", "Ultra Rare", "ACE SPEC Rare"): return max(1, meta[2])
-    if r in ("Double Rare", "Shiny Rare", "Shiny Ultra Rare"): return max(1, meta[3])
-    return 15
-
-def pack_price_usd(sid: str) -> float:
-    meta = get_set_meta(sid)
-    return meta[5] if meta[5] > 0 else 4.5
-
-# ── Pull Cost Score ───────────────────────────────────────────────────────────
-def pull_cost_score(sid: str, rarity: str) -> float:
-    """
-    Packs to pull one specific card =
-        packs_per_rarity_hit × n_cards_in_rarity_slot
-
-    Then converted to USD cost = packs × pack_price
-    Then log-scaled to a 1-10 score.
-    """
-    packs_per_hit = RARITY_PACKS.get(rarity, 90)
-    n_in_slot     = n_cards_in_rarity(sid, rarity)
-    avg_packs     = packs_per_hit * n_in_slot
-    cost_usd      = avg_packs * pack_price_usd(sid)  # USD cost to pull
-
-    # Log scale to 1–10
-    # Reference: cost ~$50 → 1.0 | cost ~$50,000 → 10.0
-    score = 1.0 + 9.0 * (np.log1p(cost_usd) - np.log1p(50)) / (np.log1p(50000) - np.log1p(50))
-    return round(float(np.clip(score, 1.0, 10.0)), 2)
-
-# ═══════════════════════════════════════════════════════════════════
-# DEMAND: Desirability Index
-# ═══════════════════════════════════════════════════════════════════
-# Import popularity scores
-import sys, os
-sys.path.insert(0, "/app/tcg_model")
-from pokemon_popularity import get_popularity_score   # returns 1–10
-from meta_scores import get_meta_score                 # returns 1–10
-
-# Character Premium score (1–10) = popularity in TCG market
-# We use the AV Club popularity list as proxy for "market rank"
-def character_premium(card_name: str) -> float:
-    return get_popularity_score(card_name)   # 1–10
-
-# Art & Hype score (1–10) using TCGPlayer price spread as proxy
-def art_hype_score(prices: dict) -> float:
-    """
-    Uses TCGPlayer low/mid/market spread as proxy for art hype.
-    High floor (low ≈ market) → strong demand for this specific art.
-    Also checks for Trending signals.
-    """
-    for pt in ["holofoil","reverseHolofoil","normal","1stEditionHolofoil"]:
-        if pt not in prices: continue
-        p = prices[pt]
-        low  = p.get("low",  0) or 0
-        mid  = p.get("mid",  0) or 0
-        high = p.get("high", 0) or 0
-        mkt  = p.get("market", 0) or 0
-        if mkt <= 0: continue
-        score = 5.0
-        if low  > 0: score += 3.0 * (low / mkt - 0.3) / 0.7    # floor ratio
-        if high > 0: score += 1.5 * min(1.0, (high/mkt - 1.0))  # ceiling premium
-        if mid  > 0: score += 0.5 * (1.0 if mkt >= mid else -0.5)
-        return round(float(np.clip(score, 1.0, 10.0)), 2)
-    return 5.0   # default when no TCGPlayer data
-
-# Universal Appeal (1–10) using meta score as proxy for Google Trends
-def universal_appeal(card_name: str, set_id: str, number: str) -> float:
-    meta = get_meta_score(set_id, number)  # 1–10 based on meta relevance
-    # Combine meta with a basic popularity signal
+def desirability_score(card_name, sid):
     pop  = get_popularity_score(card_name)
-    # Universal appeal = mix of meta relevance and broad recognition
-    return round(float(np.clip(0.5 * meta + 0.5 * (pop * 0.7 + 3.0 * 0.3), 1.0, 10.0)), 2)
+    meta = get_meta_score(card_name)
+    hype = set_hype_score(sid)
+    return round(float(np.clip(0.45*pop + 0.45*hype + 0.10*meta, 1.0, 10.0)), 2)
 
-def desirability_index(card_name: str, prices: dict, set_id: str, number: str) -> float:
-    """
-    Weighted score 1–10:
-      45% Character Premium (popularity/market rank)
-      45% Art & Hype (art quality + demand signals)
-      10% Universal Appeal (meta + broad recognition)
-    """
-    cp  = character_premium(card_name)
-    ah  = art_hype_score(prices)
-    ua  = universal_appeal(card_name, set_id, number)
-    idx = 0.45 * cp + 0.45 * ah + 0.10 * ua
-    return round(float(np.clip(idx, 1.0, 10.0)), 2)
+def pull_cost_score(rarity, sid):
+    base_packs = RARITY_PACKS.get(rarity, 72)
+    meta       = get_set_meta(sid)
+    nb_same    = {"SIR": meta[0], "IR": meta[1], "UR": meta[2], "DR": meta[3]}.get(
+        {"Special Illustration Rare":"SIR","Hyper Rare":"SIR","Shiny Ultra Rare":"SIR",
+         "Illustration Rare":"IR","Shiny Rare":"IR",
+         "Ultra Rare":"UR","ACE SPEC Rare":"UR",
+         "Double Rare":"DR"}.get(rarity, "DR"), max(meta[2], 1))
+    specific_pull = base_packs * max(nb_same, 1)
+    pack_price    = meta[5] if meta[5] > 0 else 4.5
+    is_special    = 1.3 if meta[4] == "special" else 1.0
+    raw_cost      = (specific_pull * pack_price * is_special) * FX
+    return round(float(np.clip(np.log1p(raw_cost) / np.log1p(30000) * 10, 1.0, 10.0)), 2)
 
-# ═══════════════════════════════════════════════════════════════════
-# POKEMONTCG API
-# ═══════════════════════════════════════════════════════════════════
-def pokeid_to_tcgdex(set_id: str) -> str:
-    m = re.match(r'^sv(\d+)pt(\d+)$', set_id)
-    if m: return f"sv{int(m.group(1)):02d}.{m.group(2)}"
-    m = re.match(r'^sv(\d+)$', set_id)
-    if m: return f"sv{int(m.group(1)):02d}"
-    m = re.match(r'^swsh(\d+)pt(\d+)$', set_id)
-    if m: return f"swsh{m.group(1)}.{m.group(2)}"
-    m = re.match(r'^swsh(\d+)$', set_id)
-    if m: return f"swsh{m.group(1)}"
-    m = re.match(r'^me(\d+)pt(\d+)$', set_id)
-    if m: return f"me{int(m.group(1)):02d}.{m.group(2)}"
-    m = re.match(r'^me(\d+)$', set_id)
-    if m: return f"me{int(m.group(1)):02d}"
-    return set_id
+RARITY_GROUPS = {
+    "SIR":  ["Special Illustration Rare", "Hyper Rare", "Shiny Ultra Rare"],
+    "IR":   ["Illustration Rare", "Shiny Rare"],
+    "UR":   ["Ultra Rare", "ACE SPEC Rare"],
+    "DR":   ["Double Rare"],
+}
+def rarity_group(rar):
+    for g, members in RARITY_GROUPS.items():
+        if rar in members: return g
+    return "DR"
 
 QUERY = (
     '(set.series:"Scarlet & Violet" OR set.series:"Sword & Shield" OR set.series:"Mega Evolution") '
@@ -401,400 +389,317 @@ QUERY = (
     'OR rarity:"ACE SPEC Rare" OR rarity:"Shiny Rare" OR rarity:"Shiny Ultra Rare")'
 )
 
+def pokeid_to_tcgdex(sid):
+    mapping = {
+        "sv9":"sv09","sv8pt5":"sv08pt5","sv8":"sv08","sv7":"sv07","sv6pt5":"sv06pt5",
+        "sv6":"sv06","sv5":"sv05","sv4pt5":"sv04pt5","sv4":"sv04","sv3pt5":"sv03pt5",
+        "sv3":"sv03","sv2":"sv02","sv1":"sv01",
+    }
+    return mapping.get(sid, sid)
+
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_data(_v=15):
+def fetch_data(_v=19):
     rows, seen, page = [], set(), 1
     while True:
         try:
             r = requests.get(
                 "https://api.pokemontcg.io/v2/cards",
-                params={"q":QUERY,"page":page,"pageSize":250,"orderBy":"-set.releaseDate"},
-                timeout=20
+                params={"q": QUERY, "page": page, "pageSize": 250, "orderBy": "-set.releaseDate"},
+                timeout=30
             )
             r.raise_for_status()
             cards = r.json().get("data", [])
         except Exception as e:
-            st.error(f"API error: {e}"); break
-        if not cards: break
+            st.error(f"Erreur API: {e}")
+            break
+        if not cards:
+            break
         for c in cards:
-            cid = c.get("id","")
-            if cid in seen: continue
+            cid = c.get("id", "")
+            if cid in seen:
+                continue
             seen.add(cid)
             tcp    = c.get("tcgplayer", {})
             prices = tcp.get("prices", {})
             mkt    = None
             price_source = "tcgplayer"
 
-            # TCGPlayer price (USD → CAD)
-            for pt in ["holofoil","reverseHolofoil","normal","1stEditionHolofoil"]:
+            for pt in ["holofoil", "reverseHolofoil", "normal", "1stEditionHolofoil"]:
                 if pt in prices and prices[pt].get("market"):
-                    mkt = prices[pt]["market"]; break
-            if mkt and mkt > 0:
-                mkt = mkt * FX
-            else:
-                # Fallback: CardMarket via TCGdex (EUR → CAD)
-                sid_tmp = c.get("set", {}).get("id", "")
-                num_tmp = c.get("number", "")
-                tcgdex_id = f"{pokeid_to_tcgdex(sid_tmp)}-{num_tmp}"
-                try:
-                    r_cm = requests.get(f"https://api.tcgdex.net/v2/en/cards/{tcgdex_id}", timeout=5)
-                    if r_cm.status_code == 200:
-                        cm = r_cm.json().get("pricing",{}).get("cardmarket",{}) or {}
-                        eur = cm.get("avg7-holo") or cm.get("avg7") or cm.get("trend-holo") or cm.get("trend")
-                        if eur and eur > 0.5:
-                            mkt = eur * FX_EUR
-                            price_source = "cardmarket"
-                except: pass
+                    mkt = prices[pt]["market"] * FX
+                    break
 
-            if not mkt or mkt <= 0: continue
+            if mkt is None:
+                cmu = c.get("cardmarket", {}).get("prices", {})
+                avg30 = cmu.get("avg30") or cmu.get("averageSellPrice")
+                if avg30:
+                    mkt = avg30 * FX_EUR
+                    price_source = "cardmarket"
 
-            nm  = c.get("name","?")
-            rar = c.get("rarity","Unknown")
-            sid = c.get("set",{}).get("id","")
-            num = c.get("number","")
-            rel = c.get("set",{}).get("releaseDate","")
+            if not mkt or mkt < 1.0:
+                continue
 
-            pc  = pull_cost_score(sid, rar)
-            di  = desirability_index(nm, prices, sid, num)
-            cp  = character_premium(nm)
-            ah  = art_hype_score(prices)
-            ua  = universal_appeal(nm, sid, num)
-            gr  = get_gem_rate(rar)
-            sa  = get_set_age_score(rel)
-            # Price velocity: tension buy-side via TCGPlayer spread
-            # (market - low) / market → 0 = floor pricing, 1 = strong demand
-            pv  = 5.0  # default
-            for pt in ["holofoil","reverseHolofoil","normal","1stEditionHolofoil"]:
-                if pt not in prices: continue
-                p_ = prices[pt]
-                low_ = p_.get("low", 0) or 0
-                mkt_ = p_.get("market", 0) or 0
-                if mkt_ > 0 and low_ > 0:
-                    ratio = (mkt_ - low_) / mkt_
-                    # ratio proche de 0 = floor stable = demande forte
-                    # ratio proche de 1 = low très bas = pression vendeuse
-                    pv = round(float(np.clip(10.0 - ratio * 8.0, 1.0, 10.0)), 2)
-                break
+            sid     = c.get("set", {}).get("id", "")
+            series  = c.get("set", {}).get("series", "")
+            rarity  = c.get("rarity", "")
+            name    = c.get("name", "")
+            num     = c.get("number", "")
 
-            sh = get_set_hype(sid)
             rows.append({
                 "id":           cid,
-                "name":         nm,
-                "set":          c.get("set",{}).get("name","?"),
-                "series":       c.get("set",{}).get("series","?"),
-                "release_date": rel,
-                "rarity":       rar,
-                "artist":       c.get("artist",""),
+                "name":         name,
+                "set":          c.get("set", {}).get("name", ""),
+                "set_id":       sid,
+                "series":       series,
+                "rarity":       rarity,
                 "number":       num,
-                # ── Model inputs ──
-                "pull_cost":    pc,          # 1–10 Supply score
-                "desirability": di,          # 1–10 Demand index
-                "char_premium": cp,          # 1–10 Character popularity
-                "art_hype":     ah,          # 1–10 Art quality/hype
-                "univ_appeal":  ua,          # 1–10 Universal appeal
-                "set_hype":     sh,          # 1–10 Set hype score
-                "gem_rate":     gr,          # 1–10 Grading difficulty (inverse gem%)
-                "set_age":      sa,          # 1–10 Set age curve (U-shape)
-                "price_vel":    pv,          # 1–10 Price velocity (buy-side tension)
-                # ── Market ──
                 "market_price": round(mkt, 2),
                 "price_source": price_source,
-                "tcgplayer_url": tcp.get("url",""),
-                "image_url":    c.get("images",{}).get("small",""),
-                "tcgdex_id":    f"{pokeid_to_tcgdex(sid)}-{num}",
+                "tcgplayer_url": tcp.get("url", ""),
+                "image_url":    c.get("images", {}).get("small", ""),
             })
-        if len(cards) < 250: break
+        if len(cards) < 250:
+            break
         page += 1
         time.sleep(0.15)
 
     df = pd.DataFrame(rows) if rows else pd.DataFrame()
     if not df.empty:
-        df = df.drop_duplicates(subset=["name","set"])
+        df = df.drop_duplicates(subset=["name", "set"])
     return df
 
-# ═══════════════════════════════════════════════════════════════════
-# MODEL: Ridge regression log(price) ~ pull_cost + desirability
-# ═══════════════════════════════════════════════════════════════════
-# ═══════════════════════════════════════════════════════════════════
-# SCREENER ENGINE — Ranking intra-rareté (pas de prix inventé)
-# ═══════════════════════════════════════════════════════════════════
 
-# Rarity groups
-RARITY_GROUPS = {
-    "SIR":  ["Special Illustration Rare", "Hyper Rare", "Shiny Ultra Rare"],
-    "IR":   ["Illustration Rare", "Shiny Rare"],
-    "UR":   ["Ultra Rare", "ACE SPEC Rare"],
-    "DR":   ["Double Rare"],
-}
-def rarity_group(rar: str) -> str:
-    for g, members in RARITY_GROUPS.items():
-        if rar in members: return g
-    return "DR"
+def run_screener(df: pd.DataFrame):
+    if df.empty:
+        return df
 
-def run_screener(df: pd.DataFrame, gem_t: float, over_t: float):
-    """
-    Screener intra-rareté pur — pas de prix prédit.
-
-    Pour chaque carte, on calcule un Score de Demande (0–100)
-    basé sur ses 6 variables, puis on le compare au percentile de prix
-    dans son groupe de rareté.
-
-    Signal:
-      - Demand rank >> Price rank  → sous-évaluée (demande > prix)
-      - Demand rank << Price rank  → surévaluée   (prix > demande)
-      - Équilibre                  → prix juste
-
-    On retourne un "Value Gap" = demand_pct - price_pct
-    Positif = carte sous-évaluée, Négatif = carte surévaluée.
-    """
     df = df.copy()
-    df["rarity_group"] = df["rarity"].apply(rarity_group)
+    df["pull_cost"]    = df.apply(lambda r: pull_cost_score(r["rarity"], r["set_id"]), axis=1)
+    df["desirability"] = df.apply(lambda r: desirability_score(r["name"], r["set_id"]), axis=1)
+    df["gem_rate"]     = df["rarity"].map(GEM_RATE).fillna(0.65)
+    df["rarity_grp"]   = df["rarity"].apply(rarity_group)
 
-    # ── Score de demande pondéré (6 variables) ──────────────────────
-    # Chaque variable normalisée 0–1 intra-rareté, puis pondérée
-    WEIGHTS = {
-        "desirability": 0.30,   # Char Premium + Art + Universal (composite)
-        "set_hype":     0.20,   # Réputation du set
-        "pull_cost":    0.20,   # Rareté d'obtention
-        "price_vel":    0.15,   # Tension buy-side (spread TCGPlayer)
-        "gem_rate":     0.10,   # Difficulté PSA 10
-        "set_age":      0.05,   # Courbe nouveauté/nostalgie
-    }
+    # Percentile intra-rareté
+    def percentile_rank(series):
+        return series.rank(pct=True)
 
-    feat_cols = list(WEIGHTS.keys())
-    demand_scores = np.zeros(len(df))
+    df["score_raw"] = (
+        0.45 * df["desirability"] +
+        0.35 * df["pull_cost"] +
+        0.20 * (df["gem_rate"] * 10)
+    )
 
-    for grp, idx in df.groupby("rarity_group").groups.items():
-        sub = df.loc[idx, feat_cols].copy()
-        # Normaliser chaque feature 0–1 dans le groupe
-        for col in feat_cols:
-            mn, mx = sub[col].min(), sub[col].max()
-            if mx > mn:
-                sub[col] = (sub[col] - mn) / (mx - mn)
-            else:
-                sub[col] = 0.5
-        # Score pondéré
-        w = np.array([WEIGHTS[c] for c in feat_cols])
-        scores = sub.values.dot(w)
-        demand_scores[list(df.index).index(idx[0]):] = 0  # reset
-        for i, ix in enumerate(idx):
-            demand_scores[df.index.get_loc(ix)] = scores[i]
+    df["demand_pct"] = df.groupby("rarity_grp")["score_raw"].transform(percentile_rank)
+    df["price_pct"]  = df.groupby("rarity_grp")["market_price"].transform(percentile_rank)
 
-    df["demand_score"] = demand_scores
+    # Value gap = demand percentile minus price percentile
+    df["value_gap"] = (df["demand_pct"] - df["price_pct"]).round(4)
 
-    # ── Percentile rank intra-rareté ────────────────────────────────
-    df["demand_pct"] = df.groupby("rarity_group")["demand_score"].rank(pct=True)
-    df["price_pct"]  = df.groupby("rarity_group")["market_price"].rank(pct=True)
-
-    # ── Value Gap ────────────────────────────────────────────────────
-    # +1.0 = top demand / bottom price = meilleure opportunité
-    # -1.0 = bottom demand / top price = plus surévaluée
-    df["value_gap"] = (df["demand_pct"] - df["price_pct"]).round(3)
-
-    # ── Signal ───────────────────────────────────────────────────────
-    def signal(vg):
-        if   vg >  gem_t:  return "gem"
-        elif vg < -over_t: return "over"
-        else:               return "fair"
-    df["Signal"] = df["value_gap"].apply(signal)
-
-    # ── Tier label ───────────────────────────────────────────────────
-    def tier_label(row):
-        dp = row["demand_pct"]
-        pp = row["price_pct"]
+    # Signal
+    def signal(row):
         vg = row["value_gap"]
-        if   dp >= 0.85: demand_txt = "Demande très forte"
-        elif dp >= 0.60: demand_txt = "Demande bonne"
-        elif dp >= 0.40: demand_txt = "Demande moyenne"
-        else:            demand_txt = "Demande faible"
-        if   pp >= 0.85: price_txt = "Parmi les + chères"
-        elif pp >= 0.60: price_txt = "Prix au-dessus médiane"
-        elif pp >= 0.40: price_txt = "Prix médian"
-        else:            price_txt = "Prix bas pour sa rareté"
-        return f"{demand_txt} · {price_txt}"
-    df["tier_label"] = df.apply(tier_label, axis=1)
+        if vg > 0.20:
+            return "gem"
+        elif vg < -0.20:
+            return "over"
+        return "fair"
 
+    df["Signal"] = df.apply(signal, axis=1)
     return df
 
 
-def row_html(rank: int, c: dict, sig: str) -> str:
-    vg   = c.get("value_gap", 0)
-    dp   = c.get("demand_pct", 0.5)
-    pp   = c.get("price_pct",  0.5)
-
-    rank_cls = {1:"top1", 2:"top2", 3:"top3"}.get(rank, "")
-    img      = f'<img class="lb-img" src="{c["image_url"]}">' if c.get("image_url") else '<div class="lb-img"></div>'
-
-    # Signal badge
-    if   sig == "gem":  sig_badge = '<span class="badge badge-gem">💎 Sous-évaluée</span>'
-    elif sig == "over": sig_badge = '<span class="badge badge-over">🔴 Surévaluée</span>'
-    else:               sig_badge = '<span class="badge badge-fair">✅ Prix juste</span>'
-
-    # Value gap
-    if   vg >  0.05: gap_cls, gap_str = "badge-gap-pos", f"+{vg:.2f}"
-    elif vg < -0.05: gap_cls, gap_str = "badge-gap-neg", f"{vg:.2f}"
-    else:            gap_cls, gap_str = "badge-gap-neu", f"{vg:.2f}"
-
-    demand_pct_str = f"{int(dp*100)}%"
-    price_pct_str  = f"{int(pp*100)}%"
-
-    src = " · CardMarket" if c.get("price_source") == "cardmarket" else ""
-
-    return f"""<div class="lb-row">
-  <div class="lb-rank {rank_cls}">{rank}</div>
-  {img}
-  <div class="lb-info">
-    <div class="lb-name">{c["name"]}</div>
-    <div class="lb-sub">{c["set"]} · {c["rarity"]}{src}</div>
-  </div>
-  <div class="lb-badges">
-    <span class="badge badge-price">C${c["market_price"]:.2f}</span>
-    <span class="badge badge-demand">📊 {demand_pct_str} demande</span>
-    {sig_badge}
-    <span class="{gap_cls}">{gap_str}</span>
-  </div>
-</div>"""
-
-
-def apply_filters(df, series_filter, rarity_filter, min_p, max_p, search_q, sort_by, sort_asc):
-    df = df[df["series"].isin(series_filter)]
-    df = df[df["rarity"].isin(rarity_filter)]
-    df = df[(df["market_price"] >= min_p) & (df["market_price"] <= max_p)]
-    if search_q:
-        q = search_q.lower()
-        df = df[df["name"].str.lower().str.contains(q) | df["set"].str.lower().str.contains(q)]
-    return df.sort_values(sort_by, ascending=sort_asc)
-
-def render_leaderboard(df_sub, limit):
-    if df_sub.empty:
-        st.info("Aucune carte avec ces filtres.")
-        return
-    html_rows = ""
-    for rank, (_, row) in enumerate(df_sub.head(limit).iterrows(), 1):
-        html_rows += row_html(rank, row, row["Signal"])
-    st.markdown(html_rows, unsafe_allow_html=True)
-
-# ═══════════════════════════════════════════════════════════════════
-# SIDEBAR — minimal
-# ═══════════════════════════════════════════════════════════════════
-
+# ── MAIN ──────────────────────────────────────────────────────────────────────
 def main():
-    ALL_SERIES = ["Scarlet & Violet","Sword & Shield","Mega Evolution"]
-    ALL_RARITY = ["Special Illustration Rare","Illustration Rare","Hyper Rare",
-                  "Ultra Rare","Double Rare","ACE SPEC Rare","Shiny Rare","Shiny Ultra Rare"]
-
     ss = st.session_state
     if "sort_by"  not in ss: ss.sort_by  = "value_gap"
     if "sort_asc" not in ss: ss.sort_asc = False
-    if "lb_limit" not in ss: ss.lb_limit = 30
-    if "min_p"    not in ss: ss.min_p    = 0
-    if "max_p"    not in ss: ss.max_p    = 2000
+    if "lb_limit" not in ss: ss.lb_limit = 50
     if "search_q" not in ss: ss.search_q = ""
-    if "gem_t"    not in ss: ss.gem_t    = 0.20
-    if "over_t"   not in ss: ss.over_t   = 0.20
 
-    # ── SIDEBAR ──────────────────────────────────────────────────────
+    ALL_SERIES = ["Scarlet & Violet", "Sword & Shield", "Mega Evolution"]
+    ALL_RARITY = ["Special Illustration Rare", "Illustration Rare", "Hyper Rare",
+                  "Ultra Rare", "Double Rare", "ACE SPEC Rare", "Shiny Rare", "Shiny Ultra Rare"]
+
+    # ── SIDEBAR ───────────────────────────────────────────────────────────────
     with st.sidebar:
         st.markdown(f"""
-        <div class="sidebar-avatar"><img src="{AVATAR_URL}"></div>
-        <div class="sidebar-title">The Nasty Model</div>
-        <div class="sidebar-sub">Screener TCG · 1 USD = {FX:.4f} C$</div>
+        <div class="sb-profile">
+            <img class="sb-avatar" src="{AVATAR_URL}">
+            <div class="sb-name">The Nasty Model</div>
+            <div class="sb-sub">SCREENER TCG · POKÉMON</div>
+            <div class="sb-rate">1 USD = {FX:.4f} C$</div>
+        </div>
         """, unsafe_allow_html=True)
 
-        st.markdown("---")
-
-        ss.gem_t  = st.slider("Seuil sous-evaluee", 0.05, 0.60, ss.gem_t,  0.05, key="sl_gem")
-        ss.over_t = st.slider("Seuil surevaluee",   0.05, 0.60, ss.over_t, 0.05, key="sl_over")
-
-        st.markdown("---")
-
-        with st.expander("Filtres avances", expanded=False):
-            pr = st.slider("Prix (C$)", 0, 2000, (ss.min_p, ss.max_p), 10, key="sl_price")
-            ss.min_p, ss.max_p = pr
-            ss.search_q = st.text_input("Recherche", value=ss.search_q,
-                                        placeholder="Pikachu, Umbreon...", key="ti_search")
-
-    # ── LOAD DATA ────────────────────────────────────────────────────
-    st.markdown('<h2 style="font-size:24px;font-weight:800;color:#fff;margin-bottom:2px;">The Nasty Model</h2>', unsafe_allow_html=True)
-    st.markdown('<p style="color:#4a5568;font-size:12px;margin-top:0;margin-bottom:16px;">Screener TCG · Ranking intra-rarete · Valeurs en C$</p>', unsafe_allow_html=True)
-
+    # ── LOAD DATA ─────────────────────────────────────────────────────────────
     with st.spinner("Chargement des cartes..."):
-        fetched = fetch_data(_v=18)
+        fetched = fetch_data(_v=19)
 
     if fetched.empty:
         st.error("Aucune carte chargée — vérifier la connexion API.")
         return
 
-    df_model = run_screener(fetched, ss.gem_t, ss.over_t)
+    df = run_screener(fetched)
 
-    n_gem  = (df_model["Signal"] == "gem").sum()
-    n_over = (df_model["Signal"] == "over").sum()
-    avg_gap_gem = df_model[df_model["Signal"]=="gem"]["value_gap"].mean() if n_gem > 0 else 0
+    # ── HEADER ────────────────────────────────────────────────────────────────
+    st.markdown(f"""
+    <div class="page-header">
+        <img src="{AVATAR_URL}">
+        <div>
+            <div class="page-title">The Nasty Model</div>
+            <div class="page-sub">Screener TCG · Ranking intra-rareté · Valeurs en C$</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.markdown(f'<div class="metric-box"><div class="metric-val">{len(df_model)}</div><div class="metric-lbl">Cartes analysees</div></div>', unsafe_allow_html=True)
-    with c2:
-        st.markdown(f'<div class="metric-box"><div class="metric-val" style="color:#4ade80;">{n_gem}</div><div class="metric-lbl">Sous-evaluees</div></div>', unsafe_allow_html=True)
-    with c3:
-        st.markdown(f'<div class="metric-box"><div class="metric-val" style="color:#f87171;">{n_over}</div><div class="metric-lbl">Surevaluees</div></div>', unsafe_allow_html=True)
-    with c4:
-        st.markdown(f'<div class="metric-box"><div class="metric-val" style="color:#a78bfa;">+{avg_gap_gem:.2f}</div><div class="metric-lbl">Value Gap moyen</div></div>', unsafe_allow_html=True)
+    # ── STATS BAR ────────────────────────────────────────────────────────────
+    n_total = len(df)
+    n_gem   = (df["Signal"] == "gem").sum()
+    n_over  = (df["Signal"] == "over").sum()
+    n_fair  = (df["Signal"] == "fair").sum()
 
-    st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+    st.markdown(f"""
+    <div class="stats-bar">
+        <div class="stat-pill gold"><b>{n_total}</b> cartes</div>
+        <div class="stat-pill green"><b>{n_gem}</b> sous-évaluées</div>
+        <div class="stat-pill red"><b>{n_over}</b> surévaluées</div>
+        <div class="stat-pill"><b>{n_fair}</b> prix juste</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # ── BOUTONS TRI ──────────────────────────────────────────────────
-    SORT_OPTS = [
-        ("market_price", "C$",       "badge-price"),
-        ("demand_pct",   "Demande",  "badge-demand"),
-        ("Signal",       "Signal",   "badge-fair"),
-        ("value_gap",    "Value Gap","badge-gap-pos"),
-    ]
-    sort_cols = st.columns(len(SORT_OPTS) + 2)
-    for i, (field, label, _) in enumerate(SORT_OPTS):
-        with sort_cols[i+1]:
-            active = (ss.sort_by == field)
-            arrow  = (" ↑" if ss.sort_asc else " ↓") if active else ""
-            if st.button(f"{label}{arrow}", key=f"sort_{field}", use_container_width=True):
-                if ss.sort_by == field:
-                    ss.sort_asc = not ss.sort_asc
-                else:
-                    ss.sort_by  = field
-                    ss.sort_asc = False
-                ss.lb_limit = 30
-                st.rerun()
+    # ── SEARCH ───────────────────────────────────────────────────────────────
+    search_q = st.text_input("", placeholder="🔍  Rechercher une carte, un set...", key="ti_search", label_visibility="collapsed")
+    ss.search_q = search_q
 
-    sort_labels = {"market_price":"Prix","demand_pct":"Demande","Signal":"Signal","value_gap":"Value Gap"}
-    asc_str = "croissant" if ss.sort_asc else "decroissant"
-    st.markdown(
-        f'<div style="font-size:11px;color:#4a5568;margin-bottom:6px;margin-top:4px;">' +
-        f'Tri: <b style="color:#a78bfa;">{sort_labels[ss.sort_by]}</b> {asc_str}</div>',
-        unsafe_allow_html=True
-    )
+    # ── FILTER & SORT ────────────────────────────────────────────────────────
+    df_f = df[df["series"].isin(ALL_SERIES) & df["rarity"].isin(ALL_RARITY)].copy()
+    if search_q:
+        q = search_q.lower()
+        df_f = df_f[df_f["name"].str.lower().str.contains(q) | df_f["set"].str.lower().str.contains(q)]
 
-    # ── FILTRE & LISTE ───────────────────────────────────────────────
-    df_f = apply_filters(df_model, ALL_SERIES, ALL_RARITY,
-                         ss.min_p, ss.max_p, ss.search_q,
-                         ss.sort_by, ss.sort_asc)
+    df_f = df_f.sort_values(ss.sort_by, ascending=ss.sort_asc)
 
     total = len(df_f)
     limit = min(ss.lb_limit, total)
 
-    st.markdown(
-        f'<div style="font-size:11px;color:#4a5568;margin-bottom:10px;">{total} cartes · affichage {limit}</div>',
-        unsafe_allow_html=True
-    )
+    # ── TABLE HEADER avec colonnes cliquables ─────────────────────────────────
+    COLUMNS = [
+        ("",           None,         ""),
+        ("",           None,         ""),
+        ("Carte",      None,         ""),
+        ("Prix C$",    "market_price","th-right"),
+        ("Demande",    "demand_pct",  "th-right"),
+        ("Signal",     "Signal",      "th-center"),
+        ("Value Gap",  "value_gap",   "th-right"),
+    ]
 
-    render_leaderboard(df_f, limit)
+    # Build header as columns
+    col_widths = [0.4, 0.7, 3, 1, 1, 1, 1]
+    header_cols = st.columns(col_widths)
 
+    sort_labels = {
+        "market_price": "Prix C$",
+        "demand_pct":   "Demande",
+        "Signal":       "Signal",
+        "value_gap":    "Value Gap",
+    }
+
+    for i, (hcol, (label, field, cls)) in enumerate(zip(header_cols, COLUMNS)):
+        with hcol:
+            if field is None:
+                st.markdown(f'<div class="th {cls}">{label}</div>', unsafe_allow_html=True)
+            else:
+                is_active = (ss.sort_by == field)
+                arrow = (" ▲" if ss.sort_asc else " ▼") if is_active else ""
+                active_cls = "active" if is_active else ""
+                btn_style = "color:#d4a017;" if is_active else "color:#5a5a7a;"
+                if st.button(f"{label}{arrow}", key=f"hdr_{field}", use_container_width=True):
+                    if ss.sort_by == field:
+                        ss.sort_asc = not ss.sort_asc
+                    else:
+                        ss.sort_by  = field
+                        ss.sort_asc = False
+                    ss.lb_limit = 50
+                    st.rerun()
+
+    st.markdown("<hr>", unsafe_allow_html=True)
+
+    # ── ROWS ─────────────────────────────────────────────────────────────────
+    for rank, (_, row) in enumerate(df_f.head(limit).iterrows(), 1):
+        cols = st.columns(col_widths)
+
+        # Rank
+        rank_cls = {1: "top1", 2: "top2", 3: "top3"}.get(rank, "")
+        with cols[0]:
+            st.markdown(f'<div class="cell-rank {rank_cls}">{rank}</div>', unsafe_allow_html=True)
+
+        # Image
+        with cols[1]:
+            if row.get("image_url"):
+                st.image(row["image_url"], width=64)
+            else:
+                st.markdown('<div style="width:64px;height:89px;background:#12121e;border-radius:6px;"></div>', unsafe_allow_html=True)
+
+        # Info
+        with cols[2]:
+            src_badge = ' <span style="font-size:9px;color:#3a3a55;background:#12121e;padding:1px 5px;border-radius:3px;border:1px solid #2a2a40;">CardMarket</span>' if row.get("price_source") == "cardmarket" else ""
+            st.markdown(f"""
+            <div style="padding: 4px 0;">
+                <div class="cell-name">{row["name"]}{src_badge}</div>
+                <div class="cell-sub">{row["set"]} · {row["rarity"]}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Prix
+        with cols[3]:
+            st.markdown(f'<div class="cell-num price" style="padding-top:8px;">C${row["market_price"]:.2f}</div>', unsafe_allow_html=True)
+
+        # Demande
+        with cols[4]:
+            dp = row["demand_pct"]
+            bar_w = int(dp * 100)
+            color = "#d4a017" if dp >= 0.7 else ("#8888cc" if dp >= 0.4 else "#3a3a55")
+            st.markdown(f"""
+            <div style="padding-top:6px;">
+                <div class="demand-pct" style="color:{color};">{int(dp*100)}%</div>
+                <div class="demand-bar"><div class="demand-fill" style="width:{bar_w}%;background:{color};"></div></div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Signal
+        with cols[5]:
+            sig = row["Signal"]
+            if sig == "gem":
+                badge = '<span class="sig-gem">SOUS-ÉV.</span>'
+            elif sig == "over":
+                badge = '<span class="sig-over">SUR-ÉV.</span>'
+            else:
+                badge = '<span class="sig-fair">JUSTE</span>'
+            st.markdown(f'<div style="padding-top:8px;text-align:center;">{badge}</div>', unsafe_allow_html=True)
+
+        # Value Gap
+        with cols[6]:
+            vg = row["value_gap"]
+            if vg > 0.05:
+                vg_html = f'<span class="gap-pos">+{vg:.2f}</span>'
+            elif vg < -0.05:
+                vg_html = f'<span class="gap-neg">{vg:.2f}</span>'
+            else:
+                vg_html = f'<span class="gap-neu">{vg:.2f}</span>'
+            st.markdown(f'<div style="padding-top:8px;text-align:right;">{vg_html}</div>', unsafe_allow_html=True)
+
+        st.markdown('<hr style="margin:2px 0;">', unsafe_allow_html=True)
+
+    # ── LOAD MORE ─────────────────────────────────────────────────────────────
     if limit < total:
-        col_btn = st.columns([1,2,1])
-        with col_btn[1]:
-            if st.button(f"Voir 30 de plus ({total - limit} restantes)", use_container_width=True):
-                ss.lb_limit += 30
+        remaining = total - limit
+        c1, c2, c3 = st.columns([2, 3, 2])
+        with c2:
+            if st.button(f"Voir {min(50, remaining)} de plus  ({remaining} restantes)", use_container_width=True):
+                ss.lb_limit += 50
                 st.rerun()
     else:
-        st.markdown('<p style="text-align:center;color:#4a5568;font-size:12px;margin-top:12px;">Toutes les cartes affichees</p>', unsafe_allow_html=True)
+        st.markdown(f'<p style="text-align:center;color:#3a3a55;font-size:11px;padding:12px 0;">— {total} cartes affichées —</p>', unsafe_allow_html=True)
 
 
 main()
