@@ -351,9 +351,10 @@ GEM_RATE = {
 def set_hype_score(sid): return SET_HYPE.get(sid, 5.0)
 def get_set_meta(sid): return SET_META.get(sid, DEFAULT_META)
 
-def desirability_score(card_name, sid):
+def desirability_score(card_name, sid, card_number=""):
     pop  = get_popularity_score(card_name)
-    meta = get_meta_score(card_name)
+    sid_upper = sid.upper().replace("SV", "SV").replace("SWSH", "SWSH")
+    meta = get_meta_score(sid_upper, card_number)
     hype = set_hype_score(sid)
     return round(float(np.clip(0.45*pop + 0.45*hype + 0.10*meta, 1.0, 10.0)), 2)
 
@@ -475,7 +476,7 @@ def run_screener(df: pd.DataFrame):
 
     df = df.copy()
     df["pull_cost"]    = df.apply(lambda r: pull_cost_score(r["rarity"], r["set_id"]), axis=1)
-    df["desirability"] = df.apply(lambda r: desirability_score(r["name"], r["set_id"]), axis=1)
+    df["desirability"] = df.apply(lambda r: desirability_score(r["name"], r["set_id"], r.get("number", "")), axis=1)
     df["gem_rate"]     = df["rarity"].map(GEM_RATE).fillna(0.65)
     df["rarity_grp"]   = df["rarity"].apply(rarity_group)
 
