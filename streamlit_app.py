@@ -379,7 +379,8 @@ def desirability_score(card_name, sid, card_number=""):
     sid_upper = sid.upper().replace("SV", "SV").replace("SWSH", "SWSH")
     meta = get_meta_score(sid_upper, card_number)
     hype = set_hype_score(sid)
-    return round(float(np.clip(0.45*pop + 0.45*hype + 0.10*meta, 1.0, 10.0)), 2)
+    # Poids: Popularité 55%, Hype set 30%, Méta compétitif 15%
+    return round(float(np.clip(0.55*pop + 0.30*hype + 0.15*meta, 1.0, 10.0)), 2)
 
 def pull_cost_score(rarity, sid):
     base_packs = RARITY_PACKS.get(rarity, 72)
