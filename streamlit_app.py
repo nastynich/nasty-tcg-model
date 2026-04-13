@@ -529,6 +529,9 @@ def run_screener(df: pd.DataFrame):
         return "fair"
 
     df["Signal"] = df.apply(signal, axis=1)
+    # Ordre logique pour le tri: gem=0, fair=1, over=2
+    signal_order = {"gem": 0, "fair": 1, "over": 2}
+    df["signal_sort"] = df["Signal"].map(signal_order)
     return df
 
 
@@ -639,7 +642,7 @@ def main():
         ("Carte",      None,         ""),
         ("Prix C$",    "market_price","th-right"),
         ("Demande",    "demand_pct",  "th-right"),
-        ("Signal",     "Signal",      "th-center"),
+        ("Signal",     "signal_sort", "th-center"),
         ("Value Gap",  "value_gap",   "th-right"),
     ]
 
