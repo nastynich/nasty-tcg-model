@@ -367,7 +367,7 @@ QUERY = (
 )
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_data(_v=14):
+def fetch_data(_v=15):
     rows, seen, page = [], set(), 1
     while True:
         try:
@@ -480,103 +480,137 @@ def fetch_data(_v=14):
 # ═══════════════════════════════════════════════════════════════════
 # MODEL: Ridge regression log(price) ~ pull_cost + desirability
 # ═══════════════════════════════════════════════════════════════════
-# ── Rarity groups for intra-rarity modeling ──────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════
+# SCREENER ENGINE — Ranking intra-rareté (pas de prix inventé)
+# ═══════════════════════════════════════════════════════════════════
+
+# Rarity groups
 RARITY_GROUPS = {
-    "SIR":   ["Special Illustration Rare", "Hyper Rare", "Shiny Ultra Rare"],
-    "IR":    ["Illustration Rare", "Shiny Rare"],
-    "UR":    ["Ultra Rare", "ACE SPEC Rare"],
-    "DR":    ["Double Rare"],
+    "SIR":  ["Special Illustration Rare", "Hyper Rare", "Shiny Ultra Rare"],
+    "IR":   ["Illustration Rare", "Shiny Rare"],
+    "UR":   ["Ultra Rare", "ACE SPEC Rare"],
+    "DR":   ["Double Rare"],
 }
 def rarity_group(rar: str) -> str:
     for g, members in RARITY_GROUPS.items():
         if rar in members: return g
     return "DR"
 
-def run_model(df: pd.DataFrame, w_pull: float, w_demand: float):
+def run_screener(df: pd.DataFrame, gem_t: float, over_t: float):
     """
-    Ridge regression PER RARITY GROUP: log(price) ~ pull_cost + desirability
-    
-    Why intra-rarity? A global regression is dominated by bulk Double Rares
-    ($5-20), making all premium SIR ($200-500) look "overvalued".
-    Fitting within each rarity tier anchors predictions to realistic peers.
+    Screener intra-rareté pur — pas de prix prédit.
+
+    Pour chaque carte, on calcule un Score de Demande (0–100)
+    basé sur ses 6 variables, puis on le compare au percentile de prix
+    dans son groupe de rareté.
+
+    Signal:
+      - Demand rank >> Price rank  → sous-évaluée (demande > prix)
+      - Demand rank << Price rank  → surévaluée   (prix > demande)
+      - Équilibre                  → prix juste
+
+    On retourne un "Value Gap" = demand_pct - price_pct
+    Positif = carte sous-évaluée, Négatif = carte surévaluée.
     """
     df = df.copy()
     df["rarity_group"] = df["rarity"].apply(rarity_group)
-    df["expected_price"] = np.nan
 
-    all_r2, all_cp, all_cd, all_n = [], [], [], []
+    # ── Score de demande pondéré (6 variables) ──────────────────────
+    # Chaque variable normalisée 0–1 intra-rareté, puis pondérée
+    WEIGHTS = {
+        "desirability": 0.30,   # Char Premium + Art + Universal (composite)
+        "set_hype":     0.20,   # Réputation du set
+        "pull_cost":    0.20,   # Rareté d'obtention
+        "price_vel":    0.15,   # Tension buy-side (spread TCGPlayer)
+        "gem_rate":     0.10,   # Difficulté PSA 10
+        "set_age":      0.05,   # Courbe nouveauté/nostalgie
+    }
 
-    for grp, sub_idx in df.groupby("rarity_group").groups.items():
-        sub = df.loc[sub_idx]
-        if len(sub) < 5:
-            # Not enough data — use median as expected
-            med = sub["market_price"].median()
-            df.loc[sub_idx, "expected_price"] = med
-            continue
+    feat_cols = list(WEIGHTS.keys())
+    demand_scores = np.zeros(len(df))
 
-        X = sub[["pull_cost","desirability","set_hype","gem_rate","set_age","price_vel"]].values
-        y = np.log1p(sub["market_price"].values)
+    for grp, idx in df.groupby("rarity_group").groups.items():
+        sub = df.loc[idx, feat_cols].copy()
+        # Normaliser chaque feature 0–1 dans le groupe
+        for col in feat_cols:
+            mn, mx = sub[col].min(), sub[col].max()
+            if mx > mn:
+                sub[col] = (sub[col] - mn) / (mx - mn)
+            else:
+                sub[col] = 0.5
+        # Score pondéré
+        w = np.array([WEIGHTS[c] for c in feat_cols])
+        scores = sub.values.dot(w)
+        demand_scores[list(df.index).index(idx[0]):] = 0  # reset
+        for i, ix in enumerate(idx):
+            demand_scores[df.index.get_loc(ix)] = scores[i]
 
-        model = Ridge(alpha=1.0)
-        model.fit(X, y)
+    df["demand_score"] = demand_scores
 
-        preds = np.expm1(model.predict(X))
-        df.loc[sub_idx, "expected_price"] = preds.round(2)
+    # ── Percentile rank intra-rareté ────────────────────────────────
+    df["demand_pct"] = df.groupby("rarity_group")["demand_score"].rank(pct=True)
+    df["price_pct"]  = df.groupby("rarity_group")["market_price"].rank(pct=True)
 
-        yp = model.predict(X)
-        ss_res = np.sum((y - yp)**2)
-        ss_tot = np.sum((y - np.mean(y))**2)
-        r2_grp = max(0.0, 1.0 - ss_res / ss_tot) if ss_tot > 0 else 0.0
-        all_r2.append(r2_grp * len(sub))
-        all_n.append(len(sub))
-        all_cp.append(np.expm1(model.coef_[0]) * 100)
-        all_cd.append(np.expm1(model.coef_[1]) * 100)
-        # coef[2] = set_hype (informatif seulement)
+    # ── Value Gap ────────────────────────────────────────────────────
+    # +1.0 = top demand / bottom price = meilleure opportunité
+    # -1.0 = bottom demand / top price = plus surévaluée
+    df["value_gap"] = (df["demand_pct"] - df["price_pct"]).round(3)
 
-    # Gap % = (expected - market) / market
-    df["gap_pct"] = ((df["expected_price"] - df["market_price"]) / df["market_price"] * 100).round(1)
-    df["gap_pct"] = df["gap_pct"].clip(-85, 250)
+    # ── Signal ───────────────────────────────────────────────────────
+    def signal(vg):
+        if   vg >  gem_t:  return "gem"
+        elif vg < -over_t: return "over"
+        else:               return "fair"
+    df["Signal"] = df["value_gap"].apply(signal)
 
-    def signal(row):
-        g = row["gap_pct"]
-        if   g >  w_demand * 100: return "gem"
-        elif g < -w_pull   * 100: return "over"
-        else:                      return "fair"
-    df["Signal"] = df.apply(signal, axis=1)
+    # ── Tier label ───────────────────────────────────────────────────
+    def tier_label(row):
+        dp = row["demand_pct"]
+        pp = row["price_pct"]
+        vg = row["value_gap"]
+        if   dp >= 0.85: demand_txt = "Demande très forte"
+        elif dp >= 0.60: demand_txt = "Demande bonne"
+        elif dp >= 0.40: demand_txt = "Demande moyenne"
+        else:            demand_txt = "Demande faible"
+        if   pp >= 0.85: price_txt = "Parmi les + chères"
+        elif pp >= 0.60: price_txt = "Prix au-dessus médiane"
+        elif pp >= 0.40: price_txt = "Prix médian"
+        else:            price_txt = "Prix bas pour sa rareté"
+        return f"{demand_txt} · {price_txt}"
+    df["tier_label"] = df.apply(tier_label, axis=1)
 
-    # Weighted R² across groups
-    r2 = round(sum(all_r2) / sum(all_n), 3) if all_n else 0.0
-    coef_pull   = round(np.mean(all_cp), 1) if all_cp else 0.0
-    coef_demand = round(np.mean(all_cd), 1) if all_cd else 0.0
+    return df
 
-    return df, r2, coef_pull, coef_demand
 
-# ═══════════════════════════════════════════════════════════════════
-# CARD HTML
-# ═══════════════════════════════════════════════════════════════════
 def card_html(c, sig):
-    gap = c["gap_pct"]
-    gap_str = f"+{gap:.0f}%" if gap >= 0 else f"{gap:.0f}%"
-    pill_cls = {"gem":"pill-gem","over":"pill-over","fair":"pill-fair"}[sig]
-    label    = {"gem":"💎 Sous-évaluée","over":"🔴 Surévaluée","fair":"✅ Prix juste"}[sig]
+    vg  = c.get("value_gap", 0)
+    dp  = c.get("demand_pct", 0.5)
+    pp  = c.get("price_pct",  0.5)
+    lbl = c.get("tier_label", "")
 
-    img = f'<img class="card-img" src="{c["image_url"]}">' if c.get("image_url") else ""
-    tcg = (f'<a href="{c["tcgplayer_url"]}" target="_blank" '
-           f'style="color:#7c3aed;font-size:11px;">TCGPlayer ↗</a>'
-           if c.get("tcgplayer_url") else "")
+    pill_cls = {"gem":"pill-gem","over":"pill-over","fair":"pill-fair"}[sig]
+    sig_label = {"gem":"💎 Sous-évaluée","over":"🔴 Surévaluée","fair":"✅ Prix juste"}[sig]
+
+    img      = f'<img class="card-img" src="{c["image_url"]}">' if c.get("image_url") else ""
+    tcg      = (f'<a href="{c["tcgplayer_url"]}" target="_blank" style="color:#7c3aed;font-size:11px;">TCGPlayer ↗</a>'
+                if c.get("tcgplayer_url") else "")
     src_pill = ('<span class="pill pill-source">CardMarket</span>'
                 if c.get("price_source") == "cardmarket" else "")
 
-    # Desirability breakdown bar
+    # Barre de progression visuelle pour demande vs prix
+    dp_pct = int(dp * 100)
+    pp_pct = int(pp * 100)
+    vg_color = "#34d399" if vg > 0 else "#fb7185"
+    vg_str   = f"+{vg:.2f}" if vg >= 0 else f"{vg:.2f}"
+
     cp = c.get("char_premium", 5)
     ah = c.get("art_hype",     5)
-    ua = c.get("univ_appeal",  5)
-    pc = c.get("pull_cost",    5)
     di = c.get("desirability", 5)
     sh = c.get("set_hype",     5)
+    pc = c.get("pull_cost",    5)
+    pv = c.get("price_vel",    5)
     gr = c.get("gem_rate",     5)
     sa = c.get("set_age",      5)
-    pv = c.get("price_vel",    5)
 
     return f"""
 <div class="card-box">
@@ -585,24 +619,39 @@ def card_html(c, sig):
     <div class="card-name">{c['name']}</div>
     <div class="card-sub">{c['set']} · {c['rarity']} · #{c.get('number','')} · {c.get('artist','')}</div>
     <div class="card-price">C${c['market_price']:.2f} {src_pill}</div>
-    <div class="card-vt">Expected: C${c['expected_price']:.2f} &nbsp;|&nbsp;
-        <span style="color:{'#34d399' if gap>=0 else '#fb7185'};">{gap_str}</span>
+    <div style="margin-top:4px;font-size:12px;color:#a0aec0;">{lbl}</div>
+    <div style="margin-top:8px;display:flex;gap:12px;align-items:center;">
+      <div style="flex:1;">
+        <div style="font-size:10px;color:#8892b0;margin-bottom:2px;">Demande (top {dp_pct}%)</div>
+        <div style="background:#1e293b;border-radius:4px;height:6px;">
+          <div style="background:#7c3aed;width:{dp_pct}%;height:6px;border-radius:4px;"></div>
+        </div>
+      </div>
+      <div style="flex:1;">
+        <div style="font-size:10px;color:#8892b0;margin-bottom:2px;">Prix (top {pp_pct}%)</div>
+        <div style="background:#1e293b;border-radius:4px;height:6px;">
+          <div style="background:#475569;width:{pp_pct}%;height:6px;border-radius:4px;"></div>
+        </div>
+      </div>
+      <div style="text-align:right;min-width:60px;">
+        <div style="font-size:10px;color:#8892b0;">Value Gap</div>
+        <div style="font-size:15px;font-weight:700;color:{vg_color};">{vg_str}</div>
+      </div>
     </div>
-    <div style="margin-top:6px;">
-      <span class="pill {pill_cls}">{label}</span>
+    <div style="margin-top:8px;">
+      <span class="pill {pill_cls}">{sig_label}</span>
     </div>
     <details style="margin-top:10px;">
       <summary style="font-size:11px;color:#7c3aed;cursor:pointer;">Détails du score</summary>
       <div style="font-size:11px;color:#a0aec0;margin-top:6px;line-height:2;">
-        <b>Pull Cost Score</b>: {pc:.1f}/10 &nbsp;(supply)<br>
-        <b>Set Hype</b>: {sh:.1f}/10 &nbsp;(réputation set)<br>
-        <b>Set Age</b>: {sa:.1f}/10 &nbsp;(courbe nouveauté/nostalgie)<br>
-        <b>Gem Rate</b>: {gr:.1f}/10 &nbsp;(difficulté PSA 10)<br>
-        <b>Price Velocity</b>: {pv:.1f}/10 &nbsp;(tension buy-side)<br>
-        <b>Desirability</b>: {di:.1f}/10 &nbsp;(demand composite)<br>
-        &nbsp;&nbsp;→ Character Premium: {cp:.1f}/10 (45%)<br>
-        &nbsp;&nbsp;→ Art &amp; Hype: {ah:.1f}/10 (45%)<br>
-        &nbsp;&nbsp;→ Universal Appeal: {ua:.1f}/10 (10%)<br>
+        <b>Desirability</b>: {di:.1f}/10<br>
+        &nbsp;&nbsp;→ Character Premium: {cp:.1f}/10 (30%)<br>
+        &nbsp;&nbsp;→ Art &amp; Hype: {ah:.1f}/10 (30%)<br>
+        <b>Set Hype</b>: {sh:.1f}/10<br>
+        <b>Pull Cost</b>: {pc:.1f}/10<br>
+        <b>Price Velocity</b>: {pv:.1f}/10<br>
+        <b>Gem Rate</b>: {gr:.1f}/10<br>
+        <b>Set Age</b>: {sa:.1f}/10<br>
         {tcg}
       </div>
     </details>
@@ -639,7 +688,7 @@ with st.sidebar:
     search_q = st.text_input("🔍 Recherche", placeholder="Pikachu, Umbreon…")
 
     st.markdown('<div class="sb-label">Tri</div>', unsafe_allow_html=True)
-    sort_by  = st.selectbox("Trier par", ["gap_pct","market_price","desirability","pull_cost","expected_price"])
+    sort_by  = st.selectbox("Trier par", ["value_gap","market_price","desirability","pull_cost","demand_pct"])
     sort_asc = st.checkbox("Croissant", value=False)
 
 # ═══════════════════════════════════════════════════════════════════
@@ -648,20 +697,21 @@ with st.sidebar:
 st.markdown("## 🎴 The Nasty Model — Fair Value TCG")
 
 with st.spinner("Chargement des cartes… (~60 sec première fois)"):
-    fetched = fetch_data(_v=14)
+    fetched = fetch_data(_v=15)
 
 if fetched.empty:
     st.error("Aucune carte chargée — vérifier la connexion API.")
     st.stop()
 
-df_model, r2, coef_pull, coef_demand = run_model(fetched, gem_t, over_t)
+df_model = run_screener(fetched, gem_t, over_t)
 
 # ── Metrics ──────────────────────────────────────────────────────────────────
 n_gem  = (df_model["Signal"] == "gem").sum()
 n_over = (df_model["Signal"] == "over").sum()
 n_fair = (df_model["Signal"] == "fair").sum()
+avg_gap_gem = df_model[df_model["Signal"]=="gem"]["value_gap"].mean() if n_gem > 0 else 0
 
-c1,c2,c3,c4,c5 = st.columns(5)
+c1,c2,c3,c4 = st.columns(4)
 with c1:
     st.markdown(f'<div class="metric-box"><div class="metric-val">{len(df_model)}</div>'
                 f'<div class="metric-lbl">Cartes analysées</div></div>', unsafe_allow_html=True)
@@ -672,32 +722,27 @@ with c3:
     st.markdown(f'<div class="metric-box"><div class="metric-val" style="color:#fb7185;">{n_over}</div>'
                 f'<div class="metric-lbl">🔴 Surévaluées</div></div>', unsafe_allow_html=True)
 with c4:
-    st.markdown(f'<div class="metric-box"><div class="metric-val">{r2:.2f}</div>'
-                f'<div class="metric-lbl">R² du modèle</div></div>', unsafe_allow_html=True)
-with c5:
-    st.markdown(f'<div class="metric-box"><div class="metric-val" style="color:#a5b4fc;">{coef_demand:+.0f}%</div>'
-                f'<div class="metric-lbl">Prix/pt Desirability</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="metric-box"><div class="metric-val" style="color:#a5b4fc;">+{avg_gap_gem:.2f}</div>'
+                f'<div class="metric-lbl">Value Gap moyen 💎</div></div>', unsafe_allow_html=True)
 
 # ── Model explainer ───────────────────────────────────────────────────────────
-with st.expander("📊 Comment fonctionne le modèle?", expanded=False):
-    st.markdown(f"""
-**Inspiré de PokeDataDadGuy — deux forces: Supply vs Demand**
+with st.expander("📊 Comment fonctionne le screener?", expanded=False):
+    st.markdown("""
+**Ranking intra-rareté — pas de prix inventé**
 
-**1. Pull Cost Score (Supply)** — *Combien ça coûte de pull cette carte?*
-> Packs par hit (rareté) × Nombre de cartes dans ce slot = Packs moyens à pull
-> Converti en coût USD puis log-scalé sur 1–10.
+Pour chaque carte, on calcule deux percentiles dans son groupe de rareté (SIR vs SIR, IR vs IR, etc.) :
 
-**2. Desirability Index (Demand)** — *Combien les gens la veulent?*
-> **45% Character Premium** — Popularité du Pokémon (classement AV Club × marché)
-> **45% Art & Hype** — Qualité art + signaux de demande (spread TCGPlayer)
-> **10% Universal Appeal** — Pertinence meta + reconnaissance générale
+**Demand Rank** — Où se situe la carte par rapport à ses pairs sur 6 critères :
+> Desirability (30%) · Set Hype (20%) · Pull Cost (20%) · Price Velocity (15%) · Gem Rate (10%) · Set Age (5%)
 
-**3. Régression Ridge** — *log(prix) ~ pull_cost + desirability*
-> +1 pt Pull Cost → **+{coef_pull:.0f}%** sur le prix *(PokeDataDadGuy: ~+19%)*
-> +1 pt Desirability → **+{coef_demand:.0f}%** sur le prix *(PokeDataDadGuy: ~+41%)*
-> R² = **{r2:.3f}** — proportion de variance expliquée par le modèle
+**Price Rank** — Où se situe son prix marché par rapport à ses pairs
 
-**Signal**: Expected Price vs Market Price → écart positif = sous-évaluée
+**Value Gap** = Demand Rank − Price Rank
+> **+0.40** = top 90% en demande, top 50% en prix → **sous-évaluée**
+> **−0.40** = top 50% en demande, top 90% en prix → **surévaluée**
+> Proche de 0 → prix juste pour sa demande
+
+*Aucun prix prédit — juste un ranking relatif honnête.*
     """)
 
 # ── Tabs ─────────────────────────────────────────────────────────────────────
@@ -741,11 +786,13 @@ with tab_over:
 
 with tab_all:
     disp = df_filtered[[
-        "name","set","rarity","market_price","expected_price","gap_pct",
+        "name","set","rarity","market_price","demand_pct","price_pct","value_gap",
         "pull_cost","desirability","set_hype","gem_rate","set_age","price_vel","Signal"
     ]].copy()
+    disp["demand_pct"] = (disp["demand_pct"]*100).round(0).astype(int).astype(str) + "%"
+    disp["price_pct"]  = (disp["price_pct"] *100).round(0).astype(int).astype(str) + "%"
     disp.columns = [
-        "Carte","Set","Rareté","Prix (C$)","Expected (C$)","Gap %",
+        "Carte","Set","Rareté","Prix (C$)","Demande %ile","Prix %ile","Value Gap",
         "Pull Cost","Desirability","Set Hype","Gem Rate","Set Age","Velocity","Signal"
     ]
     def color_gap(val):
@@ -782,13 +829,12 @@ with tab_chart:
     # Scatter: Expected vs Market
     ax2 = axes[1]
     for sig, grp in df_filtered.groupby("Signal"):
-        ax2.scatter(grp["market_price"], grp["expected_price"],
+        ax2.scatter(grp["price_pct"]*100, grp["demand_pct"]*100,
                     c=colors[sig], alpha=0.7, s=40, label=sig)
-    mv = max(df_filtered["market_price"].max(), df_filtered["expected_price"].max()) * 1.05
-    ax2.plot([0, mv], [0, mv], "--", color="#475569", linewidth=1, label="y = x (juste)")
-    ax2.set_xlabel("Prix Marché (C$)", color="#8892b0")
-    ax2.set_ylabel("Prix Attendu (C$)", color="#8892b0")
-    ax2.set_title("Marché vs Modèle", color="#fff", fontsize=11)
+    ax2.plot([0,100],[0,100], "--", color="#475569", linewidth=1, label="Équilibre")
+    ax2.set_xlabel("Prix %ile (dans la rareté)", color="#8892b0")
+    ax2.set_ylabel("Demande %ile (dans la rareté)", color="#8892b0")
+    ax2.set_title("Demande vs Prix\n(au-dessus = sous-évaluée)", color="#fff", fontsize=11)
     ax2.legend(facecolor="#1a1a2e", labelcolor="#e2e8f0")
 
     plt.tight_layout()
@@ -800,9 +846,9 @@ with tab_chart:
     ax3.set_facecolor("#1a1a2e")
     ax3.tick_params(colors="#8892b0")
     for s in ax3.spines.values(): s.set_color("#2d2d50")
-    ax3.hist(df_filtered["gap_pct"].clip(-100,200), bins=40, color="#7c3aed", alpha=0.8)
+    ax3.hist(df_filtered["value_gap"], bins=40, color="#7c3aed", alpha=0.8)
     ax3.axvline(0, color="#fb7185", linewidth=1.5, linestyle="--")
-    ax3.set_xlabel("Gap % (Expected - Market)", color="#8892b0")
+    ax3.set_xlabel("Value Gap (Demande %ile − Prix %ile)", color="#8892b0")
     ax3.set_title("Distribution des écarts", color="#fff", fontsize=10)
     st.pyplot(fig2)
 
