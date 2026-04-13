@@ -691,6 +691,10 @@ if "min_p"    not in st.session_state: st.session_state.min_p    = 0
 if "max_p"    not in st.session_state: st.session_state.max_p    = 2000
 if "search_q" not in st.session_state: st.session_state.search_q = ""
 
+# Initialiser gem_t / over_t dans session_state
+if "gem_t"  not in st.session_state: st.session_state.gem_t  = 0.20
+if "over_t" not in st.session_state: st.session_state.over_t = 0.20
+
 with st.sidebar:
     st.markdown(f"""
     <div class="sidebar-avatar"><img src="{AVATAR_URL}"></div>
@@ -700,8 +704,8 @@ with st.sidebar:
 
     st.markdown("---")
 
-    gem_t  = st.slider("Seuil sous-evaluee",  0.05, 0.60, 0.20, 0.05, key="gem_t")
-    over_t = st.slider("Seuil surevaluee",    0.05, 0.60, 0.20, 0.05, key="over_t")
+    st.session_state.gem_t  = st.slider("Seuil sous-evaluee",  0.05, 0.60, st.session_state.gem_t,  0.05, key="sl_gem")
+    st.session_state.over_t = st.slider("Seuil surevaluee",    0.05, 0.60, st.session_state.over_t, 0.05, key="sl_over")
 
     st.markdown("---")
 
@@ -731,7 +735,7 @@ if fetched.empty:
     st.error("Aucune carte chargée — vérifier la connexion API.")
     st.stop()
 
-df_model = run_screener(fetched, gem_t, over_t)
+df_model = run_screener(fetched, st.session_state.gem_t, st.session_state.over_t)
 
 n_gem  = (df_model["Signal"] == "gem").sum()
 n_over = (df_model["Signal"] == "over").sum()
