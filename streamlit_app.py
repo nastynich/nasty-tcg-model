@@ -656,28 +656,26 @@ def row_html(rank: int, c: dict, sig: str) -> str:
 </div>"""
 
 
-def apply_filters(df, series_filter, rarity_filter, min_p, max_p, search_q):
+def apply_filters(df, series_filter, rarity_filter, min_p, max_p, search_q, sort_by, sort_asc):
     df = df[df["series"].isin(series_filter)]
     df = df[df["rarity"].isin(rarity_filter)]
     df = df[(df["market_price"] >= min_p) & (df["market_price"] <= max_p)]
     if search_q:
         q = search_q.lower()
         df = df[df["name"].str.lower().str.contains(q) | df["set"].str.lower().str.contains(q)]
-    # Toujours trié: les plus sous-évaluées en haut (value_gap DESC)
-    return df.sort_values("value_gap", ascending=False)
+    return df.sort_values(sort_by, ascending=sort_asc)
 
 def render_leaderboard(df_sub, limit):
     if df_sub.empty:
         st.info("Aucune carte avec ces filtres.")
         return
-    df_show = df_sub.head(limit)
     html_rows = ""
-    for rank, (_, row) in enumerate(df_show.iterrows(), 1):
+    for rank, (_, row) in enumerate(df_sub.head(limit).iterrows(), 1):
         html_rows += row_html(rank, row, row["Signal"])
     st.markdown(html_rows, unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════════════════
-# SIDEBAR — minimal, tout dans un expander
+# SIDEBAR — minimal
 # ═══════════════════════════════════════════════════════════════════
 with st.sidebar:
     st.markdown(f"""
@@ -688,13 +686,11 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Seuils signal — toujours visibles car définissent le modèle
     gem_t  = st.slider("💎 Seuil sous-évaluée",  0.05, 0.60, 0.20, 0.05)
     over_t = st.slider("🔴 Seuil surévaluée",     0.05, 0.60, 0.20, 0.05)
 
     st.markdown("---")
 
-    # Tout le reste dans un expander caché par défaut
     with st.expander("⚙️ Filtres avancés", expanded=False):
         all_series = ["Scarlet & Violet","Sword & Shield","Mega Evolution"]
         series_filter = st.multiselect("Série", all_series, default=all_series)
@@ -706,7 +702,6 @@ with st.sidebar:
         min_p, max_p = st.slider("Prix (C$)", 0, 2000, (0, 2000), 10)
         search_q = st.text_input("🔍 Recherche", placeholder="Pikachu, Umbreon…")
 
-# Valeurs par défaut si expander pas ouvert
 try: series_filter
 except NameError: series_filter = ["Scarlet & Violet","Sword & Shield","Mega Evolution"]
 try: rarity_filter
@@ -718,12 +713,19 @@ try: search_q
 except NameError: search_q = ""
 
 # ═══════════════════════════════════════════════════════════════════
+# SESSION STATE — tri et pagination
+# ═══════════════════════════════════════════════════════════════════
+if "sort_by"  not in st.session_state: st.session_state.sort_by  = "value_gap"
+if "sort_asc" not in st.session_state: st.session_state.sort_asc = False
+if "lb_limit" not in st.session_state: st.session_state.lb_limit = 30
+
+# ═══════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════
 st.markdown('<h2 style="font-size:24px;font-weight:800;color:#fff;margin-bottom:2px;">🎴 The Nasty Model</h2>', unsafe_allow_html=True)
 st.markdown('<p style="color:#4a5568;font-size:12px;margin-top:0;margin-bottom:16px;">Screener TCG · Ranking intra-rareté · Valeurs en C$</p>', unsafe_allow_html=True)
 
-with st.spinner("Chargement des cartes… (~60 sec première fois)"):
+with st.spinner("Chargement des cartes…"):
     fetched = fetch_data(_v=16)
 
 if fetched.empty:
@@ -747,28 +749,66 @@ with c3:
 with c4:
     st.markdown(f'<div class="metric-box"><div class="metric-val" style="color:#a78bfa;">+{avg_gap_gem:.2f}</div><div class="metric-lbl">Value Gap moyen 💎</div></div>', unsafe_allow_html=True)
 
-st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
+st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 
-df_filtered = apply_filters(df_model, series_filter, rarity_filter, min_p, max_p, search_q)
+# ── Boutons de tri cliquables (badges style) ────────────────────────────
+SORT_OPTS = [
+    ("market_price", "C$",        "badge-price"),
+    ("demand_pct",   "📊 Demande", "badge-demand"),
+    ("Signal",       "Signal",     "badge-fair"),
+    ("value_gap",    "Value Gap",  "badge-gap-pos"),
+]
 
-# ── Liste unique, paginée par 30 ──────────────────────────────────
+sort_cols = st.columns(len(SORT_OPTS) + 2)  # padding left/right
+for i, (field, label, cls) in enumerate(SORT_OPTS):
+    with sort_cols[i+1]:
+        active = (st.session_state.sort_by == field)
+        arrow  = (" ↑" if st.session_state.sort_asc else " ↓") if active else ""
+        # Style badge actif vs inactif
+        btn_style = (
+            "background:#7c3aed;color:#fff;border:2px solid #a78bfa;"
+            if active else
+            "background:#13132a;color:#8892b0;border:1px solid #2d2d50;"
+        )
+        if st.button(
+            f"{label}{arrow}",
+            key=f"sort_{field}",
+            use_container_width=True,
+        ):
+            if st.session_state.sort_by == field:
+                st.session_state.sort_asc = not st.session_state.sort_asc
+            else:
+                st.session_state.sort_by  = field
+                st.session_state.sort_asc = False  # desc par défaut
+            st.session_state.lb_limit = 30  # reset pagination
+            st.rerun()
+
+# Afficher le tri actif
+sort_labels = {"market_price":"Prix", "demand_pct":"Demande %ile",
+               "Signal":"Signal", "value_gap":"Value Gap"}
+asc_str = "croissant ↑" if st.session_state.sort_asc else "décroissant ↓"
+st.markdown(
+    f'<div style="font-size:11px;color:#4a5568;margin-bottom:6px;margin-top:4px;">' +
+    f'Tri: <b style="color:#a78bfa;">{sort_labels[st.session_state.sort_by]}</b> {asc_str}</div>',
+    unsafe_allow_html=True
+)
+
+df_filtered = apply_filters(
+    df_model, series_filter, rarity_filter, min_p, max_p, search_q,
+    st.session_state.sort_by, st.session_state.sort_asc
+)
+
 total = len(df_filtered)
-if "lb_limit" not in st.session_state:
-    st.session_state.lb_limit = 30
-
 limit = min(st.session_state.lb_limit, total)
 
-# Header leaderboard
 st.markdown(
-    f'<div style="font-size:12px;color:#4a5568;margin-bottom:8px;">' +
-    f'Tri: <b style="color:#a78bfa;">sous-évaluée → surévaluée</b> · ' +
-    f'Affichage <b style="color:#fff;">{limit}</b> / {total} cartes</div>',
+    f'<div style="font-size:11px;color:#4a5568;margin-bottom:10px;">' +
+    f'{total} cartes · affichage {limit}</div>',
     unsafe_allow_html=True
 )
 
 render_leaderboard(df_filtered, limit)
 
-# Bouton "Voir 30 de plus"
 if limit < total:
     col_btn = st.columns([1,2,1])
     with col_btn[1]:
