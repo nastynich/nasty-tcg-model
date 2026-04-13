@@ -272,7 +272,7 @@ QUERY = (
 )
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_data(_v=11):
+def fetch_data(_v=12):
     rows, seen, page = [], set(), 1
     while True:
         try:
@@ -364,43 +364,75 @@ def fetch_data(_v=11):
 # ═══════════════════════════════════════════════════════════════════
 # MODEL: Ridge regression log(price) ~ pull_cost + desirability
 # ═══════════════════════════════════════════════════════════════════
-def run_model(df: pd.DataFrame, w_pull: float, w_demand: float) -> pd.DataFrame:
+# ── Rarity groups for intra-rarity modeling ──────────────────────────────────
+RARITY_GROUPS = {
+    "SIR":   ["Special Illustration Rare", "Hyper Rare", "Shiny Ultra Rare"],
+    "IR":    ["Illustration Rare", "Shiny Rare"],
+    "UR":    ["Ultra Rare", "ACE SPEC Rare"],
+    "DR":    ["Double Rare"],
+}
+def rarity_group(rar: str) -> str:
+    for g, members in RARITY_GROUPS.items():
+        if rar in members: return g
+    return "DR"
+
+def run_model(df: pd.DataFrame, w_pull: float, w_demand: float):
     """
-    Fit Ridge regression: log(market_price) ~ pull_cost + desirability
-    Compute Expected Price and gap signal.
+    Ridge regression PER RARITY GROUP: log(price) ~ pull_cost + desirability
+    
+    Why intra-rarity? A global regression is dominated by bulk Double Rares
+    ($5-20), making all premium SIR ($200-500) look "overvalued".
+    Fitting within each rarity tier anchors predictions to realistic peers.
     """
     df = df.copy()
-    X  = df[["pull_cost","desirability"]].values
-    y  = np.log1p(df["market_price"].values)
+    df["rarity_group"] = df["rarity"].apply(rarity_group)
+    df["expected_price"] = np.nan
 
-    model = Ridge(alpha=1.0)
-    model.fit(X, y)
+    all_r2, all_cp, all_cd, all_n = [], [], [], []
 
-    df["expected_price"] = np.expm1(model.predict(X)).round(2)
+    for grp, sub_idx in df.groupby("rarity_group").groups.items():
+        sub = df.loc[sub_idx]
+        if len(sub) < 5:
+            # Not enough data — use median as expected
+            med = sub["market_price"].median()
+            df.loc[sub_idx, "expected_price"] = med
+            continue
+
+        X = sub[["pull_cost","desirability"]].values
+        y = np.log1p(sub["market_price"].values)
+
+        model = Ridge(alpha=1.0)
+        model.fit(X, y)
+
+        preds = np.expm1(model.predict(X))
+        df.loc[sub_idx, "expected_price"] = preds.round(2)
+
+        yp = model.predict(X)
+        ss_res = np.sum((y - yp)**2)
+        ss_tot = np.sum((y - np.mean(y))**2)
+        r2_grp = max(0.0, 1.0 - ss_res / ss_tot) if ss_tot > 0 else 0.0
+        all_r2.append(r2_grp * len(sub))
+        all_n.append(len(sub))
+        all_cp.append(np.expm1(model.coef_[0]) * 100)
+        all_cd.append(np.expm1(model.coef_[1]) * 100)
+
+    # Gap % = (expected - market) / market
     df["gap_pct"] = ((df["expected_price"] - df["market_price"]) / df["market_price"] * 100).round(1)
+    df["gap_pct"] = df["gap_pct"].clip(-85, 250)
 
-    # Clamp extreme gaps to avoid noise
-    df["gap_pct"] = df["gap_pct"].clip(-90, 300)
-
-    # Signal
     def signal(row):
         g = row["gap_pct"]
-        if   g > w_demand * 100: return "gem"    # expected >> market → undervalued
-        elif g < -w_pull  * 100: return "over"   # expected << market → overvalued
-        else:                     return "fair"
+        if   g >  w_demand * 100: return "gem"
+        elif g < -w_pull   * 100: return "over"
+        else:                      return "fair"
     df["Signal"] = df.apply(signal, axis=1)
 
-    # R²
-    yp = model.predict(X)
-    ss_res = np.sum((y - yp)**2)
-    ss_tot = np.sum((y - np.mean(y))**2)
-    r2 = max(0.0, 1.0 - ss_res / ss_tot) if ss_tot > 0 else 0.0
+    # Weighted R² across groups
+    r2 = round(sum(all_r2) / sum(all_n), 3) if all_n else 0.0
+    coef_pull   = round(np.mean(all_cp), 1) if all_cp else 0.0
+    coef_demand = round(np.mean(all_cd), 1) if all_cd else 0.0
 
-    # Coefs (% price change per 1-pt increase)
-    coef_pull   = round((np.expm1(model.coef_[0]) ) * 100, 1)
-    coef_demand = round((np.expm1(model.coef_[1]) ) * 100, 1)
-
-    return df, round(r2, 3), coef_pull, coef_demand
+    return df, r2, coef_pull, coef_demand
 
 # ═══════════════════════════════════════════════════════════════════
 # CARD HTML
@@ -491,7 +523,7 @@ with st.sidebar:
 st.markdown("## 🎴 The Nasty Model — Fair Value TCG")
 
 with st.spinner("Chargement des cartes… (~60 sec première fois)"):
-    fetched = fetch_data(_v=11)
+    fetched = fetch_data(_v=12)
 
 if fetched.empty:
     st.error("Aucune carte chargée — vérifier la connexion API.")
