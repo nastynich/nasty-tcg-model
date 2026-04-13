@@ -200,6 +200,55 @@ def get_set_hype(sid: str) -> float:
     """Set Hype Score 1–10. Default 5.0 pour les sets sans score défini."""
     return SET_HYPE.get(sid, 5.0)
 
+# ── Gem Rate (PSA 10 difficulty) ─────────────────────────────────────────────
+# % de cartes de cette rareté qui obtiennent PSA 10 (données population réelles)
+# Plus c'est rare d'avoir un 10 → plus la carte gradée vaut une prime
+GEM_RATE = {
+    "Special Illustration Rare": 0.42,   # Full art textured — difficile
+    "Illustration Rare":         0.55,
+    "Hyper Rare":                0.38,   # Gold cards — très sensibles aux scratches
+    "Ultra Rare":                0.60,
+    "Double Rare":               0.65,
+    "ACE SPEC Rare":             0.58,
+    "Shiny Rare":                0.50,
+    "Shiny Ultra Rare":          0.45,
+}
+def get_gem_rate(rarity: str) -> float:
+    """Retourne un score 1–10 : plus le gem rate est BAS, plus le score est HAUT (prime de difficulté)."""
+    rate = GEM_RATE.get(rarity, 0.55)
+    # Inverser: gem rate 0.38 → score 8.5 | gem rate 0.65 → score 4.0
+    score = 10.0 - (rate - 0.30) / (0.70 - 0.30) * 7.0
+    return round(float(np.clip(score, 1.0, 10.0)), 2)
+
+# ── Set Age Score ─────────────────────────────────────────────────────────────
+def get_set_age_score(release_date: str) -> float:
+    """
+    Courbe en U : prime de nouveauté + prime de nostalgie, creux à 12-18 mois.
+    release_date format: YYYY/MM/DD ou YYYY-MM-DD
+    Score 1–10.
+    """
+    try:
+        rd = release_date.replace("/", "-")[:10]
+        from datetime import date as _date
+        rel = _date.fromisoformat(rd)
+        months_old = (date.today() - rel).days / 30.44
+    except:
+        return 5.0  # fallback
+
+    # Courbe en U : min à ~15 mois
+    if months_old <= 3:
+        score = 9.0  # tout nouveau — hype launch
+    elif months_old <= 12:
+        score = 9.0 - (months_old - 3) / 9.0 * 3.5   # 9.0 → 5.5
+    elif months_old <= 20:
+        score = 5.5 - (months_old - 12) / 8.0 * 1.5  # 5.5 → 4.0 (creux)
+    elif months_old <= 36:
+        score = 4.0 + (months_old - 20) / 16.0 * 2.5 # 4.0 → 6.5 (nostalgie)
+    else:
+        score = 6.5 + min(2.0, (months_old - 36) / 24.0 * 2.0)  # 6.5 → 8.5 (vintage)
+
+    return round(float(np.clip(score, 1.0, 10.0)), 2)
+
 def get_set_meta(sid: str):
     return SET_META.get(sid, DEFAULT_META)
 
@@ -318,7 +367,7 @@ QUERY = (
 )
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_data(_v=13):
+def fetch_data(_v=14):
     rows, seen, page = [], set(), 1
     while True:
         try:
@@ -375,6 +424,22 @@ def fetch_data(_v=13):
             cp  = character_premium(nm)
             ah  = art_hype_score(prices)
             ua  = universal_appeal(nm, sid, num)
+            gr  = get_gem_rate(rar)
+            sa  = get_set_age_score(rel)
+            # Price velocity: tension buy-side via TCGPlayer spread
+            # (market - low) / market → 0 = floor pricing, 1 = strong demand
+            pv  = 5.0  # default
+            for pt in ["holofoil","reverseHolofoil","normal","1stEditionHolofoil"]:
+                if pt not in prices: continue
+                p_ = prices[pt]
+                low_ = p_.get("low", 0) or 0
+                mkt_ = p_.get("market", 0) or 0
+                if mkt_ > 0 and low_ > 0:
+                    ratio = (mkt_ - low_) / mkt_
+                    # ratio proche de 0 = floor stable = demande forte
+                    # ratio proche de 1 = low très bas = pression vendeuse
+                    pv = round(float(np.clip(10.0 - ratio * 8.0, 1.0, 10.0)), 2)
+                break
 
             sh = get_set_hype(sid)
             rows.append({
@@ -393,6 +458,9 @@ def fetch_data(_v=13):
                 "art_hype":     ah,          # 1–10 Art quality/hype
                 "univ_appeal":  ua,          # 1–10 Universal appeal
                 "set_hype":     sh,          # 1–10 Set hype score
+                "gem_rate":     gr,          # 1–10 Grading difficulty (inverse gem%)
+                "set_age":      sa,          # 1–10 Set age curve (U-shape)
+                "price_vel":    pv,          # 1–10 Price velocity (buy-side tension)
                 # ── Market ──
                 "market_price": round(mkt, 2),
                 "price_source": price_source,
@@ -446,7 +514,7 @@ def run_model(df: pd.DataFrame, w_pull: float, w_demand: float):
             df.loc[sub_idx, "expected_price"] = med
             continue
 
-        X = sub[["pull_cost","desirability","set_hype"]].values
+        X = sub[["pull_cost","desirability","set_hype","gem_rate","set_age","price_vel"]].values
         y = np.log1p(sub["market_price"].values)
 
         model = Ridge(alpha=1.0)
@@ -506,6 +574,9 @@ def card_html(c, sig):
     pc = c.get("pull_cost",    5)
     di = c.get("desirability", 5)
     sh = c.get("set_hype",     5)
+    gr = c.get("gem_rate",     5)
+    sa = c.get("set_age",      5)
+    pv = c.get("price_vel",    5)
 
     return f"""
 <div class="card-box">
@@ -525,6 +596,9 @@ def card_html(c, sig):
       <div style="font-size:11px;color:#a0aec0;margin-top:6px;line-height:2;">
         <b>Pull Cost Score</b>: {pc:.1f}/10 &nbsp;(supply)<br>
         <b>Set Hype</b>: {sh:.1f}/10 &nbsp;(réputation set)<br>
+        <b>Set Age</b>: {sa:.1f}/10 &nbsp;(courbe nouveauté/nostalgie)<br>
+        <b>Gem Rate</b>: {gr:.1f}/10 &nbsp;(difficulté PSA 10)<br>
+        <b>Price Velocity</b>: {pv:.1f}/10 &nbsp;(tension buy-side)<br>
         <b>Desirability</b>: {di:.1f}/10 &nbsp;(demand composite)<br>
         &nbsp;&nbsp;→ Character Premium: {cp:.1f}/10 (45%)<br>
         &nbsp;&nbsp;→ Art &amp; Hype: {ah:.1f}/10 (45%)<br>
@@ -574,7 +648,7 @@ with st.sidebar:
 st.markdown("## 🎴 The Nasty Model — Fair Value TCG")
 
 with st.spinner("Chargement des cartes… (~60 sec première fois)"):
-    fetched = fetch_data(_v=13)
+    fetched = fetch_data(_v=14)
 
 if fetched.empty:
     st.error("Aucune carte chargée — vérifier la connexion API.")
@@ -668,11 +742,11 @@ with tab_over:
 with tab_all:
     disp = df_filtered[[
         "name","set","rarity","market_price","expected_price","gap_pct",
-        "pull_cost","desirability","char_premium","art_hype","univ_appeal","Signal"
+        "pull_cost","desirability","set_hype","gem_rate","set_age","price_vel","Signal"
     ]].copy()
     disp.columns = [
         "Carte","Set","Rareté","Prix (C$)","Expected (C$)","Gap %",
-        "Pull Cost","Desirability","Char. Premium","Art & Hype","Universal","Signal"
+        "Pull Cost","Desirability","Set Hype","Gem Rate","Set Age","Velocity","Signal"
     ]
     def color_gap(val):
         if isinstance(val, (int,float)):
