@@ -677,6 +677,22 @@ def render_leaderboard(df_sub, limit):
 # ═══════════════════════════════════════════════════════════════════
 # SIDEBAR — minimal
 # ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
+# SESSION STATE — initialisé UNE seule fois
+# ═══════════════════════════════════════════════════════════════════
+ALL_SERIES  = ["Scarlet & Violet","Sword & Shield","Mega Evolution"]
+ALL_RARITY  = ["Special Illustration Rare","Illustration Rare","Hyper Rare",
+               "Ultra Rare","Double Rare","ACE SPEC Rare","Shiny Rare","Shiny Ultra Rare"]
+
+if "sort_by"       not in st.session_state: st.session_state.sort_by       = "value_gap"
+if "sort_asc"      not in st.session_state: st.session_state.sort_asc      = False
+if "lb_limit"      not in st.session_state: st.session_state.lb_limit      = 30
+if "series_filter" not in st.session_state: st.session_state.series_filter = ALL_SERIES[:]
+if "rarity_filter" not in st.session_state: st.session_state.rarity_filter = ALL_RARITY[:]
+if "min_p"         not in st.session_state: st.session_state.min_p         = 0
+if "max_p"         not in st.session_state: st.session_state.max_p         = 2000
+if "search_q"      not in st.session_state: st.session_state.search_q      = ""
+
 with st.sidebar:
     st.markdown(f"""
     <div class="sidebar-avatar"><img src="{AVATAR_URL}"></div>
@@ -686,29 +702,28 @@ with st.sidebar:
 
     st.markdown("---")
 
-    gem_t  = st.slider("💎 Seuil sous-évaluée",  0.05, 0.60, 0.20, 0.05)
-    over_t = st.slider("🔴 Seuil surévaluée",     0.05, 0.60, 0.20, 0.05)
+    gem_t  = st.slider("Seuil sous-evaluee",  0.05, 0.60, 0.20, 0.05, key="gem_t")
+    over_t = st.slider("Seuil surevaluee",    0.05, 0.60, 0.20, 0.05, key="over_t")
 
     st.markdown("---")
 
-    with st.expander("Filtres avancés", expanded=False):
-        all_series = ["Scarlet & Violet","Sword & Shield","Mega Evolution"]
-        series_filter = st.multiselect("Série", all_series, default=all_series)
+    with st.expander("Filtres avances", expanded=False):
+        st.session_state.series_filter = st.multiselect(
+            "Serie", ALL_SERIES, default=st.session_state.series_filter, key="ms_series")
+        st.session_state.rarity_filter = st.multiselect(
+            "Rarete", ALL_RARITY, default=st.session_state.rarity_filter, key="ms_rarity")
+        price_range = st.slider("Prix (C$)", 0, 2000,
+            (st.session_state.min_p, st.session_state.max_p), 10, key="sl_price")
+        st.session_state.min_p, st.session_state.max_p = price_range
+        st.session_state.search_q = st.text_input(
+            "Recherche", value=st.session_state.search_q,
+            placeholder="Pikachu, Umbreon...", key="ti_search")
 
-        rarity_opts = ["Special Illustration Rare","Illustration Rare","Hyper Rare",
-                       "Ultra Rare","Double Rare","ACE SPEC Rare","Shiny Rare","Shiny Ultra Rare"]
-        rarity_filter = st.multiselect("Rareté", rarity_opts, default=rarity_opts)
-
-        min_p, max_p = st.slider("Prix (C$)", 0, 2000, (0, 2000), 10)
-        search_q = st.text_input("🔍 Recherche", placeholder="Pikachu, Umbreon…")
-
-
-# ═══════════════════════════════════════════════════════════════════
-# SESSION STATE — tri et pagination
-# ═══════════════════════════════════════════════════════════════════
-if "sort_by"  not in st.session_state: st.session_state.sort_by  = "value_gap"
-if "sort_asc" not in st.session_state: st.session_state.sort_asc = False
-if "lb_limit" not in st.session_state: st.session_state.lb_limit = 30
+series_filter = st.session_state.series_filter
+rarity_filter = st.session_state.rarity_filter
+min_p         = st.session_state.min_p
+max_p         = st.session_state.max_p
+search_q      = st.session_state.search_q
 
 # ═══════════════════════════════════════════════════════════════════
 # MAIN
