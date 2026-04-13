@@ -154,6 +154,52 @@ SET_META = {
 }
 DEFAULT_META = (10, 15, 5, 15, "main", 4.5)
 
+# ── Set Hype Score (1–10) ────────────────────────────────────────────────────
+# Mesure la hype communautaire + valeur perçue du set indépendamment des cartes
+# Sources: ventes totales, réputation, demande longue durée, sets "nostalgiques"
+SET_HYPE = {
+    # Iconic / all-time high demand
+    "sv3pt5":    9.8,  # 151 — THE most hyped modern set
+    "sv8pt5":    9.5,  # Prismatic Evolutions — sold out worldwide
+    "swsh45":    9.0,  # Shining Fates — still heavily sought
+    "swsh12pt5": 8.5,  # Crown Zenith — strong chase pool
+    "sv4pt5":    8.5,  # Paldean Fates
+    "sv6pt5":    8.0,  # Shrouded Fable
+    # Strong sets
+    "sv9":       8.0,  # Surging Sparks — Pikachu ex hype
+    "sv7":       7.5,  # Stellar Crown
+    "sv8":       7.0,  # Twilight Masquerade
+    "sv6":       7.0,  # Mask of Change
+    "sv5":       6.5,  # Temporal Forces
+    "sv4":       6.5,  # Paradox Rift
+    "sv3":       7.5,  # Obsidian Flames — Charizard ex
+    "sv2":       6.5,  # Paldea Evolved
+    "sv1":       6.0,  # Scarlet & Violet base
+    # SWSH main sets
+    "swsh12":    6.5,  # Silver Tempest
+    "swsh11":    6.0,  # Lost Origin
+    "swsh10":    6.0,  # Astral Radiance
+    "swsh9":     5.5,  # Brilliant Stars
+    "swsh8":     5.5,  # Fusion Strike
+    "swsh7":     5.0,  # Evolving Skies
+    "swsh6":     5.0,  # Chilling Reign
+    "swsh5":     5.0,  # Battle Styles
+    "swsh4":     5.0,  # Vivid Voltage
+    "swsh35":    7.0,  # Champion's Path — Charizard V holo
+    "swsh3":     4.5,  # Darkness Ablaze
+    "swsh2":     4.5,  # Rebel Clash
+    "swsh1":     5.0,  # Sword & Shield base
+    # Mega Evolution (Japanese import — collector niche)
+    "me1":       7.5,
+    "me2":       7.0,
+    "me2pt5":    7.5,
+    "me3":       7.0,
+}
+
+def get_set_hype(sid: str) -> float:
+    """Set Hype Score 1–10. Default 5.0 pour les sets sans score défini."""
+    return SET_HYPE.get(sid, 5.0)
+
 def get_set_meta(sid: str):
     return SET_META.get(sid, DEFAULT_META)
 
@@ -272,7 +318,7 @@ QUERY = (
 )
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_data(_v=12):
+def fetch_data(_v=13):
     rows, seen, page = [], set(), 1
     while True:
         try:
@@ -330,6 +376,7 @@ def fetch_data(_v=12):
             ah  = art_hype_score(prices)
             ua  = universal_appeal(nm, sid, num)
 
+            sh = get_set_hype(sid)
             rows.append({
                 "id":           cid,
                 "name":         nm,
@@ -345,6 +392,7 @@ def fetch_data(_v=12):
                 "char_premium": cp,          # 1–10 Character popularity
                 "art_hype":     ah,          # 1–10 Art quality/hype
                 "univ_appeal":  ua,          # 1–10 Universal appeal
+                "set_hype":     sh,          # 1–10 Set hype score
                 # ── Market ──
                 "market_price": round(mkt, 2),
                 "price_source": price_source,
@@ -398,7 +446,7 @@ def run_model(df: pd.DataFrame, w_pull: float, w_demand: float):
             df.loc[sub_idx, "expected_price"] = med
             continue
 
-        X = sub[["pull_cost","desirability"]].values
+        X = sub[["pull_cost","desirability","set_hype"]].values
         y = np.log1p(sub["market_price"].values)
 
         model = Ridge(alpha=1.0)
@@ -415,6 +463,7 @@ def run_model(df: pd.DataFrame, w_pull: float, w_demand: float):
         all_n.append(len(sub))
         all_cp.append(np.expm1(model.coef_[0]) * 100)
         all_cd.append(np.expm1(model.coef_[1]) * 100)
+        # coef[2] = set_hype (informatif seulement)
 
     # Gap % = (expected - market) / market
     df["gap_pct"] = ((df["expected_price"] - df["market_price"]) / df["market_price"] * 100).round(1)
@@ -456,6 +505,7 @@ def card_html(c, sig):
     ua = c.get("univ_appeal",  5)
     pc = c.get("pull_cost",    5)
     di = c.get("desirability", 5)
+    sh = c.get("set_hype",     5)
 
     return f"""
 <div class="card-box">
@@ -474,6 +524,7 @@ def card_html(c, sig):
       <summary style="font-size:11px;color:#7c3aed;cursor:pointer;">Détails du score</summary>
       <div style="font-size:11px;color:#a0aec0;margin-top:6px;line-height:2;">
         <b>Pull Cost Score</b>: {pc:.1f}/10 &nbsp;(supply)<br>
+        <b>Set Hype</b>: {sh:.1f}/10 &nbsp;(réputation set)<br>
         <b>Desirability</b>: {di:.1f}/10 &nbsp;(demand composite)<br>
         &nbsp;&nbsp;→ Character Premium: {cp:.1f}/10 (45%)<br>
         &nbsp;&nbsp;→ Art &amp; Hype: {ah:.1f}/10 (45%)<br>
@@ -523,7 +574,7 @@ with st.sidebar:
 st.markdown("## 🎴 The Nasty Model — Fair Value TCG")
 
 with st.spinner("Chargement des cartes… (~60 sec première fois)"):
-    fetched = fetch_data(_v=12)
+    fetched = fetch_data(_v=13)
 
 if fetched.empty:
     st.error("Aucune carte chargée — vérifier la connexion API.")
