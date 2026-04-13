@@ -719,7 +719,7 @@ def main():
     st.markdown('<p style="color:#4a5568;font-size:12px;margin-top:0;margin-bottom:16px;">Screener TCG · Ranking intra-rarete · Valeurs en C$</p>', unsafe_allow_html=True)
 
     with st.spinner("Chargement des cartes..."):
-        fetched = fetch_data(_v=17)
+        fetched = fetch_data(_v=18)
 
     if fetched.empty:
         st.error("Aucune carte chargée — vérifier la connexion API.")
