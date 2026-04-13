@@ -306,11 +306,13 @@ RARITY_PACKS = {
     "Special Illustration Rare": 180,
     "Illustration Rare":          90,
     "Hyper Rare":                200,
+    "Mega Hyper Rare":           200,
     "Ultra Rare":                 72,
     "Double Rare":                18,
     "ACE SPEC Rare":              72,
     "Shiny Rare":                 54,
     "Shiny Ultra Rare":          180,
+    "MEGA_ATTACK_RARE":          120,
 }
 
 SET_META = {
@@ -343,6 +345,7 @@ SET_META = {
     "swsh2":     (5,   8, 3,  8, "main",    4.0),
     "swsh1":     (4,   6, 3,  6, "main",    4.0),
     "swshp":     (0,   0, 0,  0, "promo",   0.0),
+    "me2pt5":    (12, 20, 5, 20, "special", 5.5),
     "mcd19":     (0,   0, 0,  0, "promo",   0.0),
     "mcd20":     (0,   0, 0,  0, "promo",   0.0),
     "mcd21":     (0,   0, 0,  0, "promo",   0.0),
@@ -358,17 +361,20 @@ SET_HYPE = {
     "swsh9": 6.0, "swsh8": 6.0, "swsh7": 5.5, "swsh6": 5.5,
     "swsh5": 5.0, "swsh4": 5.0, "swsh35": 6.0, "swsh3": 5.0,
     "swsh2": 4.5, "swsh1": 4.5,
+    "me2pt5": 8.0,
 }
 
 GEM_RATE = {
     "Special Illustration Rare": 0.62,
     "Illustration Rare": 0.68,
     "Hyper Rare": 0.55,
+    "Mega Hyper Rare": 0.55,
     "Ultra Rare": 0.72,
     "Double Rare": 0.78,
     "ACE SPEC Rare": 0.70,
     "Shiny Rare": 0.65,
     "Shiny Ultra Rare": 0.58,
+    "MEGA_ATTACK_RARE": 0.65,
 }
 
 def set_hype_score(sid): return SET_HYPE.get(sid, 5.0)
@@ -387,7 +393,8 @@ def pull_cost_score(rarity, sid):
     meta       = get_set_meta(sid)
     nb_same    = {"SIR": meta[0], "IR": meta[1], "UR": meta[2], "DR": meta[3]}.get(
         {"Special Illustration Rare":"SIR","Hyper Rare":"SIR","Shiny Ultra Rare":"SIR",
-         "Illustration Rare":"IR","Shiny Rare":"IR",
+         "Mega Hyper Rare":"SIR",
+         "Illustration Rare":"IR","Shiny Rare":"IR","MEGA_ATTACK_RARE":"IR",
          "Ultra Rare":"UR","ACE SPEC Rare":"UR",
          "Double Rare":"DR"}.get(rarity, "DR"), max(meta[2], 1))
     specific_pull = base_packs * max(nb_same, 1)
@@ -397,8 +404,8 @@ def pull_cost_score(rarity, sid):
     return round(float(np.clip(np.log1p(raw_cost) / np.log1p(30000) * 10, 1.0, 10.0)), 2)
 
 RARITY_GROUPS = {
-    "SIR":  ["Special Illustration Rare", "Hyper Rare", "Shiny Ultra Rare"],
-    "IR":   ["Illustration Rare", "Shiny Rare"],
+    "SIR":  ["Special Illustration Rare", "Hyper Rare", "Shiny Ultra Rare", "Mega Hyper Rare"],
+    "IR":   ["Illustration Rare", "Shiny Rare", "MEGA_ATTACK_RARE"],
     "UR":   ["Ultra Rare", "ACE SPEC Rare"],
     "DR":   ["Double Rare"],
 }
@@ -549,6 +556,7 @@ def main():
 
     ALL_SERIES = ["Scarlet & Violet", "Sword & Shield", "Mega Evolution"]
     ALL_RARITY = ["Special Illustration Rare", "Illustration Rare", "Hyper Rare",
+                  "Mega Hyper Rare", "MEGA_ATTACK_RARE",
                   "Ultra Rare", "Double Rare", "ACE SPEC Rare", "Shiny Rare", "Shiny Ultra Rare"]
 
     # ── SIDEBAR ───────────────────────────────────────────────────────────────
