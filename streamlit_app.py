@@ -691,7 +691,7 @@ with st.sidebar:
 
     st.markdown("---")
 
-    with st.expander("⚙️ Filtres avancés", expanded=False):
+    with st.expander("Filtres avancés", expanded=False):
         all_series = ["Scarlet & Violet","Sword & Shield","Mega Evolution"]
         series_filter = st.multiselect("Série", all_series, default=all_series)
 
