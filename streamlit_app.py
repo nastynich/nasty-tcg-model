@@ -516,8 +516,9 @@ def run_screener(df: pd.DataFrame):
     df["demand_pct"] = df.groupby("rarity_grp")["score_raw"].transform(percentile_rank)
     df["price_pct"]  = df.groupby("rarity_grp")["market_price"].transform(percentile_rank)
 
-    # Value gap = demand percentile minus price percentile
-    df["value_gap"] = (df["demand_pct"] - df["price_pct"]).round(4)
+    # Potentiel = gap de percentiles * 100 → affiché en %
+    df["value_gap"]   = (df["demand_pct"] - df["price_pct"]).round(4)  # garde pour signal
+    df["upside_pct"]  = ((df["demand_pct"] - df["price_pct"]) * 100).round(1)
 
     # Signal
     def signal(row):
@@ -538,7 +539,7 @@ def run_screener(df: pd.DataFrame):
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 def main():
     ss = st.session_state
-    if "sort_by"  not in ss: ss.sort_by  = "value_gap"
+    if "sort_by"  not in ss: ss.sort_by  = "upside_pct"
     if "sort_asc" not in ss: ss.sort_asc = False
     if "lb_limit" not in ss: ss.lb_limit = 50
     if "search_q" not in ss: ss.search_q = ""
@@ -643,7 +644,7 @@ def main():
         ("Prix C$",    "market_price","th-right"),
         ("Demande",    "demand_pct",  "th-right"),
         ("Signal",     "signal_sort", "th-center"),
-        ("Value Gap",  "value_gap",   "th-right"),
+        ("Potentiel",  "upside_pct",  "th-right"),
     ]
 
     # Build header as columns
@@ -654,7 +655,7 @@ def main():
         "market_price": "Prix C$",
         "demand_pct":   "Demande",
         "Signal":       "Signal",
-        "value_gap":    "Value Gap",
+        "upside_pct":   "Potentiel",
     }
 
     for i, (hcol, (label, field, cls)) in enumerate(zip(header_cols, COLUMNS)):
