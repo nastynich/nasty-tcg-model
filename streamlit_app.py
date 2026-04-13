@@ -677,152 +677,124 @@ def render_leaderboard(df_sub, limit):
 # ═══════════════════════════════════════════════════════════════════
 # SIDEBAR — minimal
 # ═══════════════════════════════════════════════════════════════════
-# ═══════════════════════════════════════════════════════════════════
-# SESSION STATE
-# ═══════════════════════════════════════════════════════════════════
-ALL_SERIES  = ["Scarlet & Violet","Sword & Shield","Mega Evolution"]
-ALL_RARITY  = ["Special Illustration Rare","Illustration Rare","Hyper Rare",
-               "Ultra Rare","Double Rare","ACE SPEC Rare","Shiny Rare","Shiny Ultra Rare"]
 
-if "sort_by"  not in st.session_state: st.session_state.sort_by  = "value_gap"
-if "sort_asc" not in st.session_state: st.session_state.sort_asc = False
-if "lb_limit" not in st.session_state: st.session_state.lb_limit = 30
-if "min_p"    not in st.session_state: st.session_state.min_p    = 0
-if "max_p"    not in st.session_state: st.session_state.max_p    = 2000
-if "search_q" not in st.session_state: st.session_state.search_q = ""
+def main():
+    ALL_SERIES = ["Scarlet & Violet","Sword & Shield","Mega Evolution"]
+    ALL_RARITY = ["Special Illustration Rare","Illustration Rare","Hyper Rare",
+                  "Ultra Rare","Double Rare","ACE SPEC Rare","Shiny Rare","Shiny Ultra Rare"]
 
-# Initialiser gem_t / over_t dans session_state
-if "gem_t"  not in st.session_state: st.session_state.gem_t  = 0.20
-if "over_t" not in st.session_state: st.session_state.over_t = 0.20
+    ss = st.session_state
+    if "sort_by"  not in ss: ss.sort_by  = "value_gap"
+    if "sort_asc" not in ss: ss.sort_asc = False
+    if "lb_limit" not in ss: ss.lb_limit = 30
+    if "min_p"    not in ss: ss.min_p    = 0
+    if "max_p"    not in ss: ss.max_p    = 2000
+    if "search_q" not in ss: ss.search_q = ""
+    if "gem_t"    not in ss: ss.gem_t    = 0.20
+    if "over_t"   not in ss: ss.over_t   = 0.20
 
-with st.sidebar:
-    st.markdown(f"""
-    <div class="sidebar-avatar"><img src="{AVATAR_URL}"></div>
-    <div class="sidebar-title">The Nasty Model</div>
-    <div class="sidebar-sub">Screener TCG · 1 USD = {FX:.4f} C$</div>
-    """, unsafe_allow_html=True)
+    # ── SIDEBAR ──────────────────────────────────────────────────────
+    with st.sidebar:
+        st.markdown(f"""
+        <div class="sidebar-avatar"><img src="{AVATAR_URL}"></div>
+        <div class="sidebar-title">The Nasty Model</div>
+        <div class="sidebar-sub">Screener TCG · 1 USD = {FX:.4f} C$</div>
+        """, unsafe_allow_html=True)
 
-    st.markdown("---")
+        st.markdown("---")
 
-    st.session_state.gem_t  = st.slider("Seuil sous-evaluee",  0.05, 0.60, st.session_state.gem_t,  0.05, key="sl_gem")
-    st.session_state.over_t = st.slider("Seuil surevaluee",    0.05, 0.60, st.session_state.over_t, 0.05, key="sl_over")
+        ss.gem_t  = st.slider("Seuil sous-evaluee", 0.05, 0.60, ss.gem_t,  0.05, key="sl_gem")
+        ss.over_t = st.slider("Seuil surevaluee",   0.05, 0.60, ss.over_t, 0.05, key="sl_over")
 
-    st.markdown("---")
+        st.markdown("---")
 
-    with st.expander("Filtres avances", expanded=False):
-        price_range = st.slider("Prix (C$)", 0, 2000,
-            (st.session_state.min_p, st.session_state.max_p), 10, key="sl_price")
-        st.session_state.min_p, st.session_state.max_p = price_range
-        st.session_state.search_q = st.text_input(
-            "Recherche", value=st.session_state.search_q,
-            placeholder="Pikachu, Umbreon...", key="ti_search")
+        with st.expander("Filtres avances", expanded=False):
+            pr = st.slider("Prix (C$)", 0, 2000, (ss.min_p, ss.max_p), 10, key="sl_price")
+            ss.min_p, ss.max_p = pr
+            ss.search_q = st.text_input("Recherche", value=ss.search_q,
+                                        placeholder="Pikachu, Umbreon...", key="ti_search")
 
-# Filtres hardcodés — toujours tout inclure
-min_p         = st.session_state.min_p
-max_p         = st.session_state.max_p
-search_q      = st.session_state.search_q
+    # ── LOAD DATA ────────────────────────────────────────────────────
+    st.markdown('<h2 style="font-size:24px;font-weight:800;color:#fff;margin-bottom:2px;">The Nasty Model</h2>', unsafe_allow_html=True)
+    st.markdown('<p style="color:#4a5568;font-size:12px;margin-top:0;margin-bottom:16px;">Screener TCG · Ranking intra-rarete · Valeurs en C$</p>', unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════════════
-# MAIN
-# ═══════════════════════════════════════════════════════════════════
-st.markdown('<h2 style="font-size:24px;font-weight:800;color:#fff;margin-bottom:2px;">🎴 The Nasty Model</h2>', unsafe_allow_html=True)
-st.markdown('<p style="color:#4a5568;font-size:12px;margin-top:0;margin-bottom:16px;">Screener TCG · Ranking intra-rareté · Valeurs en C$</p>', unsafe_allow_html=True)
+    with st.spinner("Chargement des cartes..."):
+        fetched = fetch_data(_v=17)
 
-with st.spinner("Chargement des cartes…"):
-    fetched = fetch_data(_v=16)
+    if fetched.empty:
+        st.error("Aucune carte chargée — vérifier la connexion API.")
+        return
 
-if fetched.empty:
-    st.error("Aucune carte chargée — vérifier la connexion API.")
-    st.stop()
+    df_model = run_screener(fetched, ss.gem_t, ss.over_t)
 
-df_model = run_screener(fetched, st.session_state.gem_t, st.session_state.over_t)
+    n_gem  = (df_model["Signal"] == "gem").sum()
+    n_over = (df_model["Signal"] == "over").sum()
+    avg_gap_gem = df_model[df_model["Signal"]=="gem"]["value_gap"].mean() if n_gem > 0 else 0
 
-n_gem  = (df_model["Signal"] == "gem").sum()
-n_over = (df_model["Signal"] == "over").sum()
-n_fair = (df_model["Signal"] == "fair").sum()
-avg_gap_gem = df_model[df_model["Signal"]=="gem"]["value_gap"].mean() if n_gem > 0 else 0
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown(f'<div class="metric-box"><div class="metric-val">{len(df_model)}</div><div class="metric-lbl">Cartes analysees</div></div>', unsafe_allow_html=True)
+    with c2:
+        st.markdown(f'<div class="metric-box"><div class="metric-val" style="color:#4ade80;">{n_gem}</div><div class="metric-lbl">Sous-evaluees</div></div>', unsafe_allow_html=True)
+    with c3:
+        st.markdown(f'<div class="metric-box"><div class="metric-val" style="color:#f87171;">{n_over}</div><div class="metric-lbl">Surevaluees</div></div>', unsafe_allow_html=True)
+    with c4:
+        st.markdown(f'<div class="metric-box"><div class="metric-val" style="color:#a78bfa;">+{avg_gap_gem:.2f}</div><div class="metric-lbl">Value Gap moyen</div></div>', unsafe_allow_html=True)
 
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    st.markdown(f'<div class="metric-box"><div class="metric-val">{len(df_model)}</div><div class="metric-lbl">Cartes analysées</div></div>', unsafe_allow_html=True)
-with c2:
-    st.markdown(f'<div class="metric-box"><div class="metric-val" style="color:#4ade80;">{n_gem}</div><div class="metric-lbl">💎 Sous-évaluées</div></div>', unsafe_allow_html=True)
-with c3:
-    st.markdown(f'<div class="metric-box"><div class="metric-val" style="color:#f87171;">{n_over}</div><div class="metric-lbl">🔴 Surévaluées</div></div>', unsafe_allow_html=True)
-with c4:
-    st.markdown(f'<div class="metric-box"><div class="metric-val" style="color:#a78bfa;">+{avg_gap_gem:.2f}</div><div class="metric-lbl">Value Gap moyen 💎</div></div>', unsafe_allow_html=True)
+    st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 
-st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+    # ── BOUTONS TRI ──────────────────────────────────────────────────
+    SORT_OPTS = [
+        ("market_price", "C$",       "badge-price"),
+        ("demand_pct",   "Demande",  "badge-demand"),
+        ("Signal",       "Signal",   "badge-fair"),
+        ("value_gap",    "Value Gap","badge-gap-pos"),
+    ]
+    sort_cols = st.columns(len(SORT_OPTS) + 2)
+    for i, (field, label, _) in enumerate(SORT_OPTS):
+        with sort_cols[i+1]:
+            active = (ss.sort_by == field)
+            arrow  = (" ↑" if ss.sort_asc else " ↓") if active else ""
+            if st.button(f"{label}{arrow}", key=f"sort_{field}", use_container_width=True):
+                if ss.sort_by == field:
+                    ss.sort_asc = not ss.sort_asc
+                else:
+                    ss.sort_by  = field
+                    ss.sort_asc = False
+                ss.lb_limit = 30
+                st.rerun()
 
-# ── Boutons de tri cliquables (badges style) ────────────────────────────
-SORT_OPTS = [
-    ("market_price", "C$",        "badge-price"),
-    ("demand_pct",   "📊 Demande", "badge-demand"),
-    ("Signal",       "Signal",     "badge-fair"),
-    ("value_gap",    "Value Gap",  "badge-gap-pos"),
-]
+    sort_labels = {"market_price":"Prix","demand_pct":"Demande","Signal":"Signal","value_gap":"Value Gap"}
+    asc_str = "croissant" if ss.sort_asc else "decroissant"
+    st.markdown(
+        f'<div style="font-size:11px;color:#4a5568;margin-bottom:6px;margin-top:4px;">' +
+        f'Tri: <b style="color:#a78bfa;">{sort_labels[ss.sort_by]}</b> {asc_str}</div>',
+        unsafe_allow_html=True
+    )
 
-sort_cols = st.columns(len(SORT_OPTS) + 2)  # padding left/right
-for i, (field, label, cls) in enumerate(SORT_OPTS):
-    with sort_cols[i+1]:
-        active = (st.session_state.sort_by == field)
-        arrow  = (" ↑" if st.session_state.sort_asc else " ↓") if active else ""
-        # Style badge actif vs inactif
-        btn_style = (
-            "background:#7c3aed;color:#fff;border:2px solid #a78bfa;"
-            if active else
-            "background:#13132a;color:#8892b0;border:1px solid #2d2d50;"
-        )
-        if st.button(
-            f"{label}{arrow}",
-            key=f"sort_{field}",
-            use_container_width=True,
-        ):
-            if st.session_state.sort_by == field:
-                st.session_state.sort_asc = not st.session_state.sort_asc
-            else:
-                st.session_state.sort_by  = field
-                st.session_state.sort_asc = False  # desc par défaut
-            st.session_state.lb_limit = 30  # reset pagination
-            st.rerun()
+    # ── FILTRE & LISTE ───────────────────────────────────────────────
+    df_f = apply_filters(df_model, ALL_SERIES, ALL_RARITY,
+                         ss.min_p, ss.max_p, ss.search_q,
+                         ss.sort_by, ss.sort_asc)
 
-# Afficher le tri actif
-sort_labels = {"market_price":"Prix", "demand_pct":"Demande %ile",
-               "Signal":"Signal", "value_gap":"Value Gap"}
-asc_str = "croissant ↑" if st.session_state.sort_asc else "décroissant ↓"
-st.markdown(
-    f'<div style="font-size:11px;color:#4a5568;margin-bottom:6px;margin-top:4px;">' +
-    f'Tri: <b style="color:#a78bfa;">{sort_labels[st.session_state.sort_by]}</b> {asc_str}</div>',
-    unsafe_allow_html=True
-)
+    total = len(df_f)
+    limit = min(ss.lb_limit, total)
 
-df_filtered = apply_filters(
-    df_model,
-    ALL_SERIES,
-    ALL_RARITY,
-    st.session_state.min_p,
-    st.session_state.max_p,
-    st.session_state.search_q,
-    st.session_state.sort_by,
-    st.session_state.sort_asc
-)
+    st.markdown(
+        f'<div style="font-size:11px;color:#4a5568;margin-bottom:10px;">{total} cartes · affichage {limit}</div>',
+        unsafe_allow_html=True
+    )
 
-total = len(df_filtered)
-limit = min(st.session_state.lb_limit, total)
+    render_leaderboard(df_f, limit)
 
-st.markdown(
-    f'<div style="font-size:11px;color:#4a5568;margin-bottom:10px;">' +
-    f'{total} cartes · affichage {limit}</div>',
-    unsafe_allow_html=True
-)
+    if limit < total:
+        col_btn = st.columns([1,2,1])
+        with col_btn[1]:
+            if st.button(f"Voir 30 de plus ({total - limit} restantes)", use_container_width=True):
+                ss.lb_limit += 30
+                st.rerun()
+    else:
+        st.markdown('<p style="text-align:center;color:#4a5568;font-size:12px;margin-top:12px;">Toutes les cartes affichees</p>', unsafe_allow_html=True)
 
-render_leaderboard(df_filtered, limit)
 
-if limit < total:
-    col_btn = st.columns([1,2,1])
-    with col_btn[1]:
-        if st.button(f"⬇ Voir 30 de plus ({total - limit} restantes)", use_container_width=True):
-            st.session_state.lb_limit += 30
-            st.rerun()
-else:
-    st.markdown('<p style="text-align:center;color:#4a5568;font-size:12px;margin-top:12px;">✓ Toutes les cartes affichées</p>', unsafe_allow_html=True)
+main()
