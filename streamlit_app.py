@@ -714,8 +714,6 @@ with st.sidebar:
             placeholder="Pikachu, Umbreon...", key="ti_search")
 
 # Filtres hardcodés — toujours tout inclure
-series_filter = ALL_SERIES
-rarity_filter = ALL_RARITY
 min_p         = st.session_state.min_p
 max_p         = st.session_state.max_p
 search_q      = st.session_state.search_q
@@ -795,8 +793,14 @@ st.markdown(
 )
 
 df_filtered = apply_filters(
-    df_model, series_filter, rarity_filter, min_p, max_p, search_q,
-    st.session_state.sort_by, st.session_state.sort_asc
+    df_model,
+    ALL_SERIES,
+    ALL_RARITY,
+    st.session_state.min_p,
+    st.session_state.max_p,
+    st.session_state.search_q,
+    st.session_state.sort_by,
+    st.session_state.sort_asc
 )
 
 total = len(df_filtered)
