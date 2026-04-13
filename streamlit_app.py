@@ -702,15 +702,6 @@ with st.sidebar:
         min_p, max_p = st.slider("Prix (C$)", 0, 2000, (0, 2000), 10)
         search_q = st.text_input("🔍 Recherche", placeholder="Pikachu, Umbreon…")
 
-try: series_filter
-except NameError: series_filter = ["Scarlet & Violet","Sword & Shield","Mega Evolution"]
-try: rarity_filter
-except NameError: rarity_filter = ["Special Illustration Rare","Illustration Rare","Hyper Rare",
-                                    "Ultra Rare","Double Rare","ACE SPEC Rare","Shiny Rare","Shiny Ultra Rare"]
-try: min_p
-except NameError: min_p, max_p = 0, 2000
-try: search_q
-except NameError: search_q = ""
 
 # ═══════════════════════════════════════════════════════════════════
 # SESSION STATE — tri et pagination
