@@ -99,6 +99,7 @@ PRINT_RUN_SCORE = {
     "pgo":       8.0,  # Pokemon GO — limited window
     "cel25":     9.0,  # Celebrations — very limited
     "me2pt5":    8.5,  # Ascended Heroes — limited
+    "me2":       8.5,  # Phantasmal Flames — limited
 }
 
 def _load_cache():
@@ -246,6 +247,7 @@ SEALED_MARKET_PRICES = {
     "pgo":       200.00,
     "cel25":     350.00,
     "me2pt5":    120.00,
+    "me2":       110.00,
 }
 
 # ─── Cache global des métadonnées de sets ─────────────────────────────────────
@@ -265,6 +267,7 @@ SET_RELEASE_DATES = {
     "swsh1":     "2020/02/07", "swsh45": "2021/02/19", "swsh45sv": "2021/02/19",
     "swsh35":    "2020/09/25", "pgo": "2022/07/01", "cel25": "2021/10/08",
     "me2pt5":    "2025/03/28",
+    "me2":       "2025/11/14",
 }
 
 def get_all_set_intelligence():
