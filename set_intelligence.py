@@ -251,80 +251,59 @@ SEALED_MARKET_PRICES = {
 # ─── Cache global des métadonnées de sets ─────────────────────────────────────
 _SET_META_CACHE = None
 
+# ─── Dates de sortie connues (statique — pas besoin d'API) ──────────────────
+SET_RELEASE_DATES = {
+    "sv10":      "2025/05/30", "sv9": "2025/02/07", "sv8pt5": "2025/01/17",
+    "sv8":       "2024/11/08", "sv7": "2024/09/13", "sv6pt5": "2024/08/02",
+    "sv6":       "2024/05/24", "sv5": "2024/03/22", "sv4pt5": "2024/01/26",
+    "sv4":       "2023/11/03", "sv3pt5": "2023/09/22", "sv3": "2023/08/11",
+    "sv2":       "2023/06/09", "sv1": "2023/03/31",
+    "swsh12pt5": "2023/01/20", "swsh12": "2022/11/11", "swsh11": "2022/09/09",
+    "swsh10":    "2022/07/01", "swsh9": "2022/02/25", "swsh8": "2021/11/12",
+    "swsh7":     "2021/08/27", "swsh6": "2021/06/18", "swsh5": "2021/03/19",
+    "swsh4":     "2020/11/13", "swsh3": "2020/08/14", "swsh2": "2020/05/01",
+    "swsh1":     "2020/02/07", "swsh45": "2021/02/19", "swsh45sv": "2021/02/19",
+    "swsh35":    "2020/09/25", "pgo": "2022/07/01", "cel25": "2021/10/08",
+    "me2pt5":    "2025/03/28",
+}
+
 def get_all_set_intelligence():
     """
     Retourne un dict {set_id: {...scores...}} pour tous les sets.
-    Utilisé dans streamlit_app.py pour enrichir chaque carte.
+    100% statique — pas d'appel API au démarrage.
+    Cache en mémoire pour éviter recalculs.
     """
     global _SET_META_CACHE
     if _SET_META_CACHE is not None:
         return _SET_META_CACHE
 
-    cache = _load_cache()
-
-    if "sets" in cache:
-        _SET_META_CACHE = cache["sets"]
-        return _SET_META_CACHE
-
-    # Fetch API
-    api_sets = _fetch_set_metadata_from_api()
-
+    all_sids = set(list(SET_MSRP.keys()) + list(PRINT_RUN_SCORE.keys()) + list(SET_RELEASE_DATES.keys()))
     result = {}
-    for sid, meta in api_sets.items():
-        age_score, is_oop = _get_set_age_score(meta.get("release_date", ""))
+
+    for sid in all_sids:
+        release_date      = SET_RELEASE_DATES.get(sid, "")
+        age_score, is_oop_flag = _get_set_age_score(release_date)
         print_run         = PRINT_RUN_SCORE.get(sid, 5.0)
         mkt_price         = SEALED_MARKET_PRICES.get(sid)
-        msrp              = SET_MSRP.get(sid)
         sealed_ratio      = get_sealed_market_ratio(sid, mkt_price)
         sealed_score      = sealed_ratio_to_score(sealed_ratio)
-
-        # Densité de rares = printed_total / total (plus c'est élevé, plus y'a de rares)
-        total    = max(meta.get("total", 1), 1)
-        printed  = meta.get("printed_total", total)
-        density  = round(printed / total, 3) if total > 0 else 1.0
-
-        # Scarcity score = moyenne pondérée
-        # age_score 40%, print_run 40%, is_oop bonus 20%
-        oop_bonus  = 2.0 if is_oop else 0.0
-        scarcity   = round(0.40 * age_score + 0.40 * print_run + 0.20 * (7.0 + oop_bonus), 2)
-        scarcity   = max(1.0, min(10.0, scarcity))
+        oop_bonus         = 2.0 if is_oop_flag else 0.0
+        scarcity          = round(0.40 * age_score + 0.40 * print_run + 0.20 * (7.0 + oop_bonus), 2)
+        scarcity          = max(1.0, min(10.0, scarcity))
 
         result[sid] = {
-            "name":         meta.get("name", sid),
-            "release_date": meta.get("release_date", ""),
+            "name":         sid,
+            "release_date": release_date,
             "age_score":    age_score,
-            "is_oop":       is_oop,
+            "is_oop":       is_oop_flag,
             "print_run":    print_run,
             "sealed_ratio": sealed_ratio,
             "sealed_score": sealed_score,
-            "density":      density,
+            "density":      1.0,
             "scarcity":     scarcity,
         }
 
-    # Ajouter sets qui ne sont pas dans l'API (ex: me2pt5)
-    for sid in list(SET_MSRP.keys()) + list(PRINT_RUN_SCORE.keys()):
-        if sid not in result:
-            age_score, is_oop = 5.0, False
-            print_run         = PRINT_RUN_SCORE.get(sid, 5.0)
-            mkt_price         = SEALED_MARKET_PRICES.get(sid)
-            sealed_ratio      = get_sealed_market_ratio(sid, mkt_price)
-            sealed_score      = sealed_ratio_to_score(sealed_ratio)
-            oop_bonus         = 2.0 if is_oop else 0.0
-            scarcity          = round(0.40 * age_score + 0.40 * print_run + 0.20 * (7.0 + oop_bonus), 2)
-            result[sid] = {
-                "name":         sid,
-                "release_date": "",
-                "age_score":    age_score,
-                "is_oop":       is_oop,
-                "print_run":    print_run,
-                "sealed_ratio": sealed_ratio,
-                "sealed_score": sealed_score,
-                "density":      1.0,
-                "scarcity":     scarcity,
-            }
-
     _SET_META_CACHE = result
-    _save_cache({"sets": result})
     return result
 
 def get_scarcity_score(set_id):
