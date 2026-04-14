@@ -394,6 +394,7 @@ SET_HYPE = {
     "pgo": 6.5, "cel25": 7.0, "cel25c": 7.0,
     "swsh45": 7.5, "swsh45sv": 8.0,
     "me2pt5": 8.0,
+    "me2": 8.5,
 }
 
 GEM_RATE = {
@@ -468,8 +469,10 @@ QUERY = (
 )
 
 QUERY_MEGA = (
-    'set.id:me2pt5 '
-    '(rarity:"Mega Hyper Rare" OR rarity:"MEGA_ATTACK_RARE")'
+    '(set.id:me2pt5 OR set.id:me2) '
+    '(rarity:"Mega Hyper Rare" OR rarity:"MEGA_ATTACK_RARE" '
+    'OR rarity:"Special Illustration Rare" OR rarity:"Illustration Rare" '
+    'OR rarity:"Ultra Rare" OR rarity:"Double Rare")'
 )
 
 def pokeid_to_tcgdex(sid):
@@ -486,7 +489,7 @@ def pokeid_to_tcgdex(sid):
     return mapping.get(sid, sid)
 
 @st.cache_data(ttl=21600, show_spinner=False)
-def fetch_data(_v=24):
+def fetch_data(_v=25):
     rows, seen, page = [], set(), 1
     MAX_PAGES = 12  # safety cap — ~3000 cards max
     while page <= MAX_PAGES:
@@ -728,7 +731,7 @@ def main():
 
     # ── LOAD DATA ─────────────────────────────────────────────────────────────
     with st.spinner("Chargement des cartes..."):
-        fetched = fetch_data(_v=24)
+        fetched = fetch_data(_v=25)
 
     if fetched.empty:
         st.error("Aucune carte chargée — vérifier la connexion API.")
