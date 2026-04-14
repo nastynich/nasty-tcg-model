@@ -485,20 +485,22 @@ def pokeid_to_tcgdex(sid):
     }
     return mapping.get(sid, sid)
 
-@st.cache_data(ttl=0, show_spinner=False)
-def fetch_data(_v=23):
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_data(_v=24):
     rows, seen, page = [], set(), 1
-    while True:
+    MAX_PAGES = 12  # safety cap — ~3000 cards max
+    while page <= MAX_PAGES:
         try:
             r = requests.get(
                 "https://api.pokemontcg.io/v2/cards",
                 params={"q": QUERY, "page": page, "pageSize": 250, "orderBy": "-set.releaseDate"},
-                timeout=30
+                timeout=20
             )
             r.raise_for_status()
             cards = r.json().get("data", [])
         except Exception as e:
-            st.error(f"Erreur API: {e}")
+            if page == 1:
+                st.error(f"Erreur API: {e}")
             break
         if not cards:
             break
@@ -726,7 +728,7 @@ def main():
 
     # ── LOAD DATA ─────────────────────────────────────────────────────────────
     with st.spinner("Chargement des cartes..."):
-        fetched = fetch_data(_v=23)
+        fetched = fetch_data(_v=24)
 
     if fetched.empty:
         st.error("Aucune carte chargée — vérifier la connexion API.")
