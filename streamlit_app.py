@@ -489,7 +489,7 @@ def pokeid_to_tcgdex(sid):
     return mapping.get(sid, sid)
 
 @st.cache_data(ttl=21600, show_spinner=False)
-def fetch_data(_v=25):
+def fetch_data(_v=26):
     rows, seen, page = [], set(), 1
     MAX_PAGES = 12  # safety cap — ~3000 cards max
     while page <= MAX_PAGES:
@@ -702,15 +702,49 @@ def run_screener(df: pd.DataFrame):
     return df
 
 
+
+def make_sparkline(avg1, avg7, avg30, width=80, height=28):
+    """Génère un sparkline SVG inline à partir des prix CardMarket avg1/avg7/avg30."""
+    points = [avg30, avg7, avg1]
+    if not any(points) or all(p == 0 for p in points):
+        return ""
+    valid = [p for p in points if p and p > 0]
+    if len(valid) < 2:
+        return ""
+    mn, mx = min(valid), max(valid)
+    if mx == mn:
+        return ""
+    # normalize to SVG coords
+    xs = [5, width // 2, width - 5]
+    ys = [height - 4 - int((p - mn) / (mx - mn) * (height - 8)) if p and p > 0 else height // 2 for p in points]
+    pts = " ".join(f"{x},{y}" for x, y in zip(xs, ys))
+    color = "#00c853" if avg1 >= avg30 else "#ff4444"
+    # fill polygon
+    fill_pts = f"5,{height} " + pts + f" {width-5},{height}"
+    svg = (
+        f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+        f'xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;">'
+        f'<defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">'
+        f'<stop offset="0%" stop-color="{color}" stop-opacity="0.3"/>'
+        f'<stop offset="100%" stop-color="{color}" stop-opacity="0.0"/></linearGradient></defs>'
+        f'<polygon points="{fill_pts}" fill="url(#sg)"/>'
+        f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>'
+        f'<circle cx="{xs[-1]}" cy="{ys[-1]}" r="2.5" fill="{color}"/>'
+        f'</svg>'
+    )
+    return svg
+
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 def main():
     ss = st.session_state
     if "sort_by"  not in ss: ss.sort_by  = "upside_pct"
     if "sort_asc" not in ss: ss.sort_asc = False
     if "lb_limit" not in ss: ss.lb_limit = 50
-    if "search_q" not in ss: ss.search_q = ""
-    if "price_min"  not in ss: ss.price_min = 0
-    if "price_max"  not in ss: ss.price_max = 9999
+    if "search_q"   not in ss: ss.search_q   = ""
+    if "price_min"  not in ss: ss.price_min  = 0
+    if "price_max"  not in ss: ss.price_max  = 9999
+    if "set_filter" not in ss: ss.set_filter  = "Tous les sets"
+    if "opps_only"  not in ss: ss.opps_only   = False
 
     ALL_SERIES = ["Scarlet & Violet", "Sword & Shield"]
     ALL_RARITY = ["Special Illustration Rare", "Illustration Rare", "Hyper Rare",
@@ -729,15 +763,40 @@ def main():
         </div>
         """, unsafe_allow_html=True)
 
+        st.markdown("---")
+
+        # Opps only toggle
+        opps_val = st.toggle("🎯 Opportunités seulement", value=ss.opps_only, key="tog_opps")
+        if opps_val != ss.opps_only:
+            ss.opps_only = opps_val
+            ss.lb_limit  = 50
+            st.rerun()
+
+        st.markdown("<div style='margin-top:12px;'></div>", unsafe_allow_html=True)
+
+        # Set filter — populated after data loads
+        st.markdown("<div style='font-size:11px;color:#5a5a7a;letter-spacing:1px;margin-bottom:4px;'>FILTRER PAR SET</div>", unsafe_allow_html=True)
+
     # ── LOAD DATA ─────────────────────────────────────────────────────────────
     with st.spinner("Chargement des cartes..."):
-        fetched = fetch_data(_v=25)
+        fetched = fetch_data(_v=26)
 
     if fetched.empty:
         st.error("Aucune carte chargée — vérifier la connexion API.")
         return
 
     df = run_screener(fetched)
+
+    # Build set list for sidebar filter
+    all_sets = ["Tous les sets"] + sorted(df["set"].dropna().unique().tolist())
+    with st.sidebar:
+        chosen_set = st.selectbox("", all_sets,
+            index=all_sets.index(ss.set_filter) if ss.set_filter in all_sets else 0,
+            key="sel_set", label_visibility="collapsed")
+        if chosen_set != ss.set_filter:
+            ss.set_filter = chosen_set
+            ss.lb_limit   = 50
+            st.rerun()
 
     # ── HEADER ────────────────────────────────────────────────────────────────
     st.markdown(f"""
@@ -798,6 +857,12 @@ def main():
     if search_q:
         q = search_q.lower()
         df_f = df_f[df_f["name"].str.lower().str.contains(q) | df_f["set"].str.lower().str.contains(q)]
+
+    if ss.set_filter != "Tous les sets":
+        df_f = df_f[df_f["set"] == ss.set_filter]
+
+    if ss.opps_only:
+        df_f = df_f[df_f["Signal"] == "gem"]
 
     df_f = df_f.sort_values(ss.sort_by, ascending=ss.sort_asc)
 
@@ -862,13 +927,29 @@ def main():
             else:
                 st.markdown('<div style="width:64px;height:89px;background:#12121e;border-radius:6px;"></div>', unsafe_allow_html=True)
 
-        # Info
+        # Info + sparkline
         with cols[2]:
             src_badge = ' <span style="font-size:9px;color:#3a3a55;background:#12121e;padding:1px 5px;border-radius:3px;border:1px solid #2a2a40;">CardMarket</span>' if row.get("price_source") == "cardmarket" else ""
+            spark_svg = make_sparkline(
+                row.get("cm_avg1", 0) or 0,
+                row.get("cm_avg7", 0) or 0,
+                row.get("cm_avg30", 0) or 0,
+            )
+            spark_html = f'<span style="margin-left:8px;">{spark_svg}</span>' if spark_svg else ""
+            # avg1 vs avg30 label
+            avg1  = row.get("cm_avg1", 0) or 0
+            avg30 = row.get("cm_avg30", 0) or 0
+            if avg1 > 0 and avg30 > 0:
+                pct_chg = (avg1 - avg30) / avg30 * 100
+                chg_color = "#00c853" if pct_chg >= 0 else "#ff4444"
+                chg_label = f'<span style="font-size:9px;color:{chg_color};margin-left:4px;">{"+" if pct_chg>=0 else ""}{pct_chg:.1f}% 30j</span>'
+            else:
+                chg_label = ""
             st.markdown(f"""
             <div style="padding: 4px 0;">
                 <div class="cell-name">{row["name"]}{src_badge}</div>
                 <div class="cell-sub">{row["set"]} · {row["rarity"]}</div>
+                <div style="display:flex;align-items:center;margin-top:4px;">{spark_html}{chg_label}</div>
             </div>
             """, unsafe_allow_html=True)
 
