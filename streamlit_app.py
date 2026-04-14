@@ -302,6 +302,8 @@ hr { border-color: #1e1e30 !important; margin: 8px 0 !important; }
 from pokemon_popularity import get_popularity_score
 from meta_scores import get_meta_score
 from pricecharting_scraper import get_ebay_volumes, volume_to_score
+from set_intelligence import get_scarcity_score, get_sealed_score, get_set_density_score, is_oop
+from google_trends_scraper import get_hype_score
 
 RARITY_PACKS = {
     "Special Illustration Rare": 180,
@@ -419,12 +421,12 @@ def set_hype_score(sid): return SET_HYPE.get(sid, 5.0)
 def get_set_meta(sid): return SET_META.get(sid, DEFAULT_META)
 
 def desirability_score(card_name, sid, card_number=""):
-    pop  = get_popularity_score(card_name)
-    sid_upper = sid.upper().replace("SV", "SV").replace("SWSH", "SWSH")
-    meta = get_meta_score(sid_upper, card_number)
-    hype = set_hype_score(sid)
-    # Poids: Popularité 55%, Hype set 30%, Méta compétitif 15%
-    return round(float(np.clip(0.55*pop + 0.30*hype + 0.15*meta, 1.0, 10.0)), 2)
+    # Pilier 1: DÉSIRABILITÉ
+    # Popularité Pokémon (55%) + Art/Hype Google Trends (25%) + Consistance set (20%)
+    pop          = get_popularity_score(card_name)
+    hype         = get_hype_score(sid)            # Google Trends — dynamique
+    consistency  = get_set_density_score(sid)     # Peu de rares = set plus consistant
+    return round(float(np.clip(0.55*pop + 0.25*hype + 0.20*consistency, 1.0, 10.0)), 2)
 
 def pull_cost_score(rarity, sid):
     base_packs = RARITY_PACKS.get(rarity, 72)
@@ -645,16 +647,32 @@ def run_screener(df: pd.DataFrame):
 
     df["momentum"] = df.apply(momentum_score, axis=1)
 
-    # Poids: desirability 35%, pull_cost 28%, gem_rate 12%, momentum 15%, ebay_volume 10%
-    # ebay_volume = signal de demande réelle (eBay sold listings via PriceCharting)
-    # Poids volontairement faible pour éviter les faux négatifs sur cartes sans données
+    # ── PILIER 2: RARETÉ/OFFRE ────────────────────────────────────────────────
+    # Scarcité (age + print run + OOP) 40% + Pull cost 40% + Gem rate 20%
+    df["scarcity"]     = df["set_id"].apply(get_scarcity_score)
+    df["sealed_score"] = df["set_id"].apply(get_sealed_score)
+
+    df["rarity_score"] = (
+        0.40 * df["scarcity"] +
+        0.40 * df["pull_cost"] +
+        0.20 * (df["gem_rate"] * 10)
+    ).clip(1.0, 10.0).round(2)
+
+    # ── PILIER 3: PERFORMANCE MARCHÉ ─────────────────────────────────────────
+    # Momentum CardMarket 40% + eBay volume 35% + Sealed ratio 25%
+    df["market_perf"] = (
+        0.40 * df["momentum"] +
+        0.35 * df["ebay_score"] +
+        0.25 * df["sealed_score"]
+    ).clip(1.0, 10.0).round(2)
+
+    # ── SCORE FINAL: 3 piliers PokeDataDad ────────────────────────────────────
+    # Désirabilité 40% + Rareté/Offre 30% + Performance Marché 30%
     df["score_raw"] = (
-        0.35 * df["desirability"] +
-        0.28 * df["pull_cost"] +
-        0.12 * (df["gem_rate"] * 10) +
-        0.15 * df["momentum"] +
-        0.10 * df["ebay_score"]
-    )
+        0.40 * df["desirability"] +
+        0.30 * df["rarity_score"] +
+        0.30 * df["market_perf"]
+    ).clip(1.0, 10.0).round(2)
 
     df["demand_pct"] = df.groupby("rarity_grp")["score_raw"].transform(percentile_rank)
     df["price_pct"]  = df.groupby("rarity_grp")["market_price"].transform(percentile_rank)
