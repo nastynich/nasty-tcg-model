@@ -301,6 +301,7 @@ hr { border-color: #1e1e30 !important; margin: 8px 0 !important; }
 
 from pokemon_popularity import get_popularity_score
 from meta_scores import get_meta_score
+from pricecharting_scraper import get_ebay_volumes, volume_to_score
 
 RARITY_PACKS = {
     "Special Illustration Rare": 180,
@@ -313,9 +314,21 @@ RARITY_PACKS = {
     "Shiny Rare":                 54,
     "Shiny Ultra Rare":          180,
     "MEGA_ATTACK_RARE":          120,
+    # Sword & Shield raretés premium
+    "Rare Rainbow":              216,
+    "Rare Secret":               216,
+    "Rare Ultra":                 72,
+    "Rare Shiny":                108,
+    "Trainer Gallery Rare Holo":  72,
+    "Rare Holo VMAX":             54,
+    "Rare Holo VSTAR":            54,
 }
 
 SET_META = {
+    # 2025 sets
+    "sv10":      (12, 20, 5, 20, "main",    4.5),
+    "zsv10pt5":  (15, 22, 6, 20, "special", 5.5),
+    "rsv10pt5":  (15, 22, 6, 20, "special", 5.5),
     "sv9":    (10, 15, 5, 20, "main",    4.5),
     "sv8pt5": (20, 30, 8, 25, "special", 5.5),
     "sv8":    (12, 20, 6, 18, "main",    4.5),
@@ -345,6 +358,18 @@ SET_META = {
     "swsh2":     (5,   8, 3,  8, "main",    4.0),
     "swsh1":     (4,   6, 3,  6, "main",    4.0),
     "swshp":     (0,   0, 0,  0, "promo",   0.0),
+    # Trainer Galleries (sous-sets)
+    "swsh12pt5gg": (15, 22, 6, 20, "special", 5.0),
+    "swsh12tg":    (10, 18, 5, 18, "main",    4.0),
+    "swsh11tg":    (10, 16, 5, 16, "main",    4.0),
+    "swsh10tg":    (8,  14, 4, 14, "main",    4.0),
+    "swsh9tg":     (8,  14, 4, 14, "main",    4.0),
+    # Sets spéciaux
+    "pgo":         (10, 16, 5, 16, "special", 5.0),
+    "cel25":       (12, 18, 5, 18, "special", 6.0),
+    "cel25c":      (12, 18, 5, 18, "special", 6.0),
+    "swsh45":      (12, 18, 5, 18, "special", 5.5),
+    "swsh45sv":    (15, 22, 6, 20, "special", 6.0),
     "me2pt5":    (12, 20, 5, 20, "special", 5.5),
     "mcd19":     (0,   0, 0,  0, "promo",   0.0),
     "mcd20":     (0,   0, 0,  0, "promo",   0.0),
@@ -354,13 +379,18 @@ SET_META = {
 DEFAULT_META = (10, 15, 5, 15, "main", 4.5)
 
 SET_HYPE = {
+    # 2025
+    "sv10": 7.5, "zsv10pt5": 8.0, "rsv10pt5": 8.0,
     "sv8pt5": 9.5, "sv3pt5": 8.5, "sv6pt5": 8.0, "sv4pt5": 7.5,
     "sv9": 8.0, "sv8": 7.5, "sv7": 7.0, "sv6": 7.0, "sv5": 7.5,
     "sv4": 7.0, "sv3": 7.0, "sv2": 6.5, "sv1": 6.5,
-    "swsh12pt5": 8.5, "swsh12": 7.0, "swsh11": 6.5, "swsh10": 6.5,
-    "swsh9": 6.0, "swsh8": 6.0, "swsh7": 5.5, "swsh6": 5.5,
+    "swsh12pt5": 8.5, "swsh12pt5gg": 8.5, "swsh12": 7.0, "swsh12tg": 7.0,
+    "swsh11": 6.5, "swsh11tg": 6.5, "swsh10": 6.5, "swsh10tg": 6.5,
+    "swsh9": 6.0, "swsh9tg": 6.0, "swsh8": 6.0, "swsh7": 5.5, "swsh6": 5.5,
     "swsh5": 5.0, "swsh4": 5.0, "swsh35": 6.0, "swsh3": 5.0,
     "swsh2": 4.5, "swsh1": 4.5,
+    "pgo": 6.5, "cel25": 7.0, "cel25c": 7.0,
+    "swsh45": 7.5, "swsh45sv": 8.0,
     "me2pt5": 8.0,
 }
 
@@ -375,6 +405,14 @@ GEM_RATE = {
     "Shiny Rare": 0.65,
     "Shiny Ultra Rare": 0.58,
     "MEGA_ATTACK_RARE": 0.65,
+    # Sword & Shield
+    "Rare Rainbow":             0.58,
+    "Rare Secret":              0.60,
+    "Rare Ultra":               0.70,
+    "Rare Shiny":               0.65,
+    "Trainer Gallery Rare Holo": 0.72,
+    "Rare Holo VMAX":           0.75,
+    "Rare Holo VSTAR":          0.73,
 }
 
 def set_hype_score(sid): return SET_HYPE.get(sid, 5.0)
@@ -393,10 +431,11 @@ def pull_cost_score(rarity, sid):
     meta       = get_set_meta(sid)
     nb_same    = {"SIR": meta[0], "IR": meta[1], "UR": meta[2], "DR": meta[3]}.get(
         {"Special Illustration Rare":"SIR","Hyper Rare":"SIR","Shiny Ultra Rare":"SIR",
-         "Mega Hyper Rare":"SIR",
+         "Mega Hyper Rare":"SIR","Rare Rainbow":"SIR","Rare Secret":"SIR",
          "Illustration Rare":"IR","Shiny Rare":"IR","MEGA_ATTACK_RARE":"IR",
-         "Ultra Rare":"UR","ACE SPEC Rare":"UR",
-         "Double Rare":"DR"}.get(rarity, "DR"), max(meta[2], 1))
+         "Rare Shiny":"IR","Trainer Gallery Rare Holo":"IR",
+         "Ultra Rare":"UR","ACE SPEC Rare":"UR","Rare Ultra":"UR",
+         "Double Rare":"DR","Rare Holo VMAX":"DR","Rare Holo VSTAR":"DR"}.get(rarity, "DR"), max(meta[2], 1))
     specific_pull = base_packs * max(nb_same, 1)
     pack_price    = meta[5] if meta[5] > 0 else 4.5
     is_special    = 1.3 if meta[4] == "special" else 1.0
@@ -404,10 +443,12 @@ def pull_cost_score(rarity, sid):
     return round(float(np.clip(np.log1p(raw_cost) / np.log1p(30000) * 10, 1.0, 10.0)), 2)
 
 RARITY_GROUPS = {
-    "SIR":  ["Special Illustration Rare", "Hyper Rare", "Shiny Ultra Rare", "Mega Hyper Rare"],
-    "IR":   ["Illustration Rare", "Shiny Rare", "MEGA_ATTACK_RARE"],
-    "UR":   ["Ultra Rare", "ACE SPEC Rare"],
-    "DR":   ["Double Rare"],
+    "SIR":  ["Special Illustration Rare", "Hyper Rare", "Shiny Ultra Rare", "Mega Hyper Rare",
+           "Rare Rainbow", "Rare Secret"],
+    "IR":   ["Illustration Rare", "Shiny Rare", "MEGA_ATTACK_RARE",
+           "Rare Shiny", "Trainer Gallery Rare Holo"],
+    "UR":   ["Ultra Rare", "ACE SPEC Rare", "Rare Ultra"],
+    "DR":   ["Double Rare", "Rare Holo VMAX", "Rare Holo VSTAR"],
 }
 def rarity_group(rar):
     for g, members in RARITY_GROUPS.items():
@@ -415,22 +456,35 @@ def rarity_group(rar):
     return "DR"
 
 QUERY = (
-    '(set.series:"Scarlet & Violet" OR set.series:"Sword & Shield" OR set.series:"Mega Evolution") '
+    '(set.series:"Scarlet & Violet" OR set.series:"Sword & Shield") '
     '(rarity:"Special Illustration Rare" OR rarity:"Illustration Rare" '
     'OR rarity:"Hyper Rare" OR rarity:"Ultra Rare" OR rarity:"Double Rare" '
-    'OR rarity:"ACE SPEC Rare" OR rarity:"Shiny Rare" OR rarity:"Shiny Ultra Rare")'
+    'OR rarity:"ACE SPEC Rare" OR rarity:"Shiny Rare" OR rarity:"Shiny Ultra Rare" '
+    'OR rarity:"Rare Rainbow" OR rarity:"Rare Secret" OR rarity:"Rare Ultra" '
+    'OR rarity:"Rare Shiny" OR rarity:"Trainer Gallery Rare Holo" '
+    'OR rarity:"Rare Holo VMAX" OR rarity:"Rare Holo VSTAR")'
+)
+
+QUERY_MEGA = (
+    'set.id:me2pt5 '
+    '(rarity:"Mega Hyper Rare" OR rarity:"MEGA_ATTACK_RARE")'
 )
 
 def pokeid_to_tcgdex(sid):
     mapping = {
         "sv9":"sv09","sv8pt5":"sv08pt5","sv8":"sv08","sv7":"sv07","sv6pt5":"sv06pt5",
+        "sv10":"sv10","zsv10pt5":"zsv10pt5","rsv10pt5":"rsv10pt5",
         "sv6":"sv06","sv5":"sv05","sv4pt5":"sv04pt5","sv4":"sv04","sv3pt5":"sv03pt5",
         "sv3":"sv03","sv2":"sv02","sv1":"sv01",
+        "swsh12pt5gg":"swsh12pt5gg","swsh12tg":"swsh12tg","swsh11tg":"swsh11tg",
+        "swsh10tg":"swsh10tg","swsh9tg":"swsh9tg",
+        "pgo":"pgo","cel25":"cel25","cel25c":"cel25c",
+        "swsh45":"swsh45","swsh45sv":"swsh45sv",
     }
     return mapping.get(sid, sid)
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_data(_v=19):
+@st.cache_data(ttl=0, show_spinner=False)
+def fetch_data(_v=23):
     rows, seen, page = [], set(), 1
     while True:
         try:
@@ -468,7 +522,7 @@ def fetch_data(_v=19):
                     mkt = avg30 * FX_EUR
                     price_source = "cardmarket"
 
-            if not mkt or mkt < 1.0:
+            if not mkt or mkt < 0.25:
                 continue
 
             sid     = c.get("set", {}).get("id", "")
@@ -519,6 +573,50 @@ def run_screener(df: pd.DataFrame):
         return df
 
     df = df.copy()
+
+    # ── Volume eBay via PriceCharting (cache 24h, fetch parallèle) ──────────────
+    try:
+        from datetime import date
+        import json as _json
+
+        cards_list   = df[["id", "name", "set_id", "number"]].to_dict("records")
+        cache_file   = os.path.join(os.path.dirname(__file__), "pricecharting_cache.json")
+
+        # Vérifier combien de cartes sont déjà dans le cache d'aujourd'hui
+        cached_today = {}
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file) as _f:
+                    _c = _json.load(_f)
+                if _c.get("_date") == str(date.today()):
+                    cached_today = {k: v for k, v in _c.items() if not k.startswith("_")}
+            except Exception:
+                pass
+
+        cards_to_fetch = [c for c in cards_list if c["id"] not in cached_today]
+        n_missing      = len(cards_to_fetch)
+
+        if n_missing > 0:
+            # Afficher un spinner progressif pendant le fetch
+            progress_bar  = st.progress(0, text=f"📡 Chargement volumes eBay... 0 / {n_missing} cartes")
+            _done_ref     = [0]
+
+            def _update_progress(done, total):
+                _done_ref[0] = done
+                pct = done / total
+                progress_bar.progress(pct, text=f"📡 Volumes eBay — {done} / {total} cartes ({int(pct*100)}%)")
+
+            vol_map = get_ebay_volumes(cards_list, max_workers=8, progress_callback=_update_progress)
+            progress_bar.empty()
+        else:
+            vol_map = get_ebay_volumes(cards_list, max_workers=8)
+
+        df["ebay_vol"]   = df["id"].map(vol_map).fillna(0.0)
+        df["ebay_score"] = df["ebay_vol"].apply(volume_to_score)
+    except Exception:
+        df["ebay_vol"]   = 0.0
+        df["ebay_score"] = 5.0  # neutre si PriceCharting inaccessible
+
     df["pull_cost"]    = df.apply(lambda r: pull_cost_score(r["rarity"], r["set_id"]), axis=1)
     df["desirability"] = df.apply(lambda r: desirability_score(r["name"], r["set_id"], r.get("number", "")), axis=1)
     df["gem_rate"]     = df["rarity"].map(GEM_RATE).fillna(0.65)
@@ -547,11 +645,15 @@ def run_screener(df: pd.DataFrame):
 
     df["momentum"] = df.apply(momentum_score, axis=1)
 
+    # Poids: desirability 35%, pull_cost 28%, gem_rate 12%, momentum 15%, ebay_volume 10%
+    # ebay_volume = signal de demande réelle (eBay sold listings via PriceCharting)
+    # Poids volontairement faible pour éviter les faux négatifs sur cartes sans données
     df["score_raw"] = (
-        0.40 * df["desirability"] +
-        0.30 * df["pull_cost"] +
-        0.15 * (df["gem_rate"] * 10) +
-        0.15 * df["momentum"]
+        0.35 * df["desirability"] +
+        0.28 * df["pull_cost"] +
+        0.12 * (df["gem_rate"] * 10) +
+        0.15 * df["momentum"] +
+        0.10 * df["ebay_score"]
     )
 
     df["demand_pct"] = df.groupby("rarity_grp")["score_raw"].transform(percentile_rank)
@@ -587,9 +689,10 @@ def main():
     if "price_min"  not in ss: ss.price_min = 0
     if "price_max"  not in ss: ss.price_max = 9999
 
-    ALL_SERIES = ["Scarlet & Violet", "Sword & Shield", "Mega Evolution"]
+    ALL_SERIES = ["Scarlet & Violet", "Sword & Shield"]
     ALL_RARITY = ["Special Illustration Rare", "Illustration Rare", "Hyper Rare",
-                  "Mega Hyper Rare", "MEGA_ATTACK_RARE",
+                  "Rare Rainbow", "Rare Secret", "Rare Ultra", "Rare Shiny",
+                  "Trainer Gallery Rare Holo", "Rare Holo VMAX", "Rare Holo VSTAR",
                   "Ultra Rare", "Double Rare", "ACE SPEC Rare", "Shiny Rare", "Shiny Ultra Rare"]
 
     # ── SIDEBAR ───────────────────────────────────────────────────────────────
@@ -605,7 +708,7 @@ def main():
 
     # ── LOAD DATA ─────────────────────────────────────────────────────────────
     with st.spinner("Chargement des cartes..."):
-        fetched = fetch_data(_v=19)
+        fetched = fetch_data(_v=23)
 
     if fetched.empty:
         st.error("Aucune carte chargée — vérifier la connexion API.")
