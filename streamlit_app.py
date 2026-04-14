@@ -477,6 +477,14 @@ def fetch_data(_v=19):
             name    = c.get("name", "")
             num     = c.get("number", "")
 
+            # Données CardMarket pour momentum
+            cmu_full = c.get("cardmarket", {}).get("prices", {})
+            cm_avg1  = cmu_full.get("avg1", 0) or 0
+            cm_avg7  = cmu_full.get("avg7", 0) or 0
+            cm_avg30 = cmu_full.get("avg30", 0) or 0
+            cm_trend = cmu_full.get("trendPrice", 0) or 0
+            cm_low   = cmu_full.get("lowPrice", 0) or 0
+
             rows.append({
                 "id":           cid,
                 "name":         name,
@@ -489,6 +497,11 @@ def fetch_data(_v=19):
                 "price_source": price_source,
                 "tcgplayer_url": tcp.get("url", ""),
                 "image_url":    c.get("images", {}).get("small", ""),
+                "cm_avg1":      cm_avg1,
+                "cm_avg7":      cm_avg7,
+                "cm_avg30":     cm_avg30,
+                "cm_trend":     cm_trend,
+                "cm_low":       cm_low,
             })
         if len(cards) < 250:
             break
@@ -515,10 +528,30 @@ def run_screener(df: pd.DataFrame):
     def percentile_rank(series):
         return series.rank(pct=True)
 
+    # Momentum score basé sur les données CardMarket avg1/avg30
+    def momentum_score(row):
+        avg1  = row.get("cm_avg1", 0)
+        avg30 = row.get("cm_avg30", 0)
+        trend = row.get("cm_trend", 0)
+        low   = row.get("cm_low", 0)
+        if avg30 and avg30 > 0 and avg1 and avg1 > 0:
+            # Momentum 30j: variation % du prix moyen
+            mom30 = (avg1 - avg30) / avg30  # -1 à +1 typiquement
+            # Spread liquidité: spread serré = marché actif
+            spread = 1 - ((trend - low) / trend) if trend and trend > low > 0 else 0.5
+            spread = max(0, min(1, spread))
+            # Score normalisé 1-10
+            raw = 5.0 + (mom30 * 15) + (spread * 2)
+            return round(float(np.clip(raw, 1.0, 10.0)), 2)
+        return 5.0  # neutre si pas de données CM
+
+    df["momentum"] = df.apply(momentum_score, axis=1)
+
     df["score_raw"] = (
-        0.45 * df["desirability"] +
-        0.35 * df["pull_cost"] +
-        0.20 * (df["gem_rate"] * 10)
+        0.40 * df["desirability"] +
+        0.30 * df["pull_cost"] +
+        0.15 * (df["gem_rate"] * 10) +
+        0.15 * df["momentum"]
     )
 
     df["demand_pct"] = df.groupby("rarity_grp")["score_raw"].transform(percentile_rank)
