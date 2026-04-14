@@ -52,6 +52,7 @@ SET_SEARCH_TERMS = {
     "pgo":       "Pokemon Go TCG cards",
     "cel25":     "Celebrations Pokemon 25th",
     "me2pt5":    "Ascended Heroes Pokemon",
+    "me2":       "Phantasmal Flames Pokemon",
 }
 
 def _load_cache():
@@ -176,6 +177,7 @@ FALLBACK_TRENDS = {
     "pgo":       7.5,
     "cel25":     8.5,
     "me2pt5":    7.0,
+    "me2":       7.5,
 }
 
 def get_hype_score(set_id):
