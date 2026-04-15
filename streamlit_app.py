@@ -812,7 +812,11 @@ def main():
     # ── STATS BAR ────────────────────────────────────────────────────────────
     price_floor = int(df["market_price"].min()) if not df.empty else 0
     price_ceil  = int(df["market_price"].max()) + 1 if not df.empty else 9999
-    if ss.price_max == 9999: ss.price_max = price_ceil
+    # Always clamp session values to actual data bounds (prevents StreamlitValueAboveMaxError)
+    if ss.price_max == 9999 or ss.price_max > price_ceil:
+        ss.price_max = price_ceil
+    if ss.price_min > price_ceil:
+        ss.price_min = price_floor
     n_total = len(df)
     n_gem   = (df["Signal"] == "gem").sum()
     n_over  = (df["Signal"] == "over").sum()
