@@ -916,92 +916,107 @@ def main():
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    # ── ROWS ─────────────────────────────────────────────────────────────────
+    # ── ROWS — single HTML block per row for proper vertical centering ──────────
+    ROW_H = 72  # px height per row
+
     for rank, (_, row) in enumerate(df_f.head(limit).iterrows(), 1):
-        cols = st.columns(col_widths)
 
-        # Rank
-        rank_cls = {1: "top1", 2: "top2", 3: "top3"}.get(rank, "")
-        with cols[0]:
-            st.markdown(f'<div class="cell-rank {rank_cls}">{rank}</div>', unsafe_allow_html=True)
+        # ── pre-compute all values ──────────────────────────────────────────
+        rank_cls  = {1:"top1",2:"top2",3:"top3"}.get(rank,"")
+        rank_color = {"top1":"#ffd700","top2":"#c0c0c0","top3":"#cd7f32"}.get(rank_cls,"#5a5a7a")
 
-        # Image
-        with cols[1]:
-            if row.get("image_url"):
-                st.image(row["image_url"], width=64)
-            else:
-                st.markdown('<div style="width:64px;height:89px;background:#12121e;border-radius:6px;"></div>', unsafe_allow_html=True)
+        src_badge = ('<span style="font-size:9px;color:#3a3a55;background:#12121e;'
+                     'padding:1px 5px;border-radius:3px;border:1px solid #2a2a40;">CardMarket</span> ')\
+                    if row.get("price_source") == "cardmarket" else ""
 
-        # Info (nom + set + rareté seulement)
-        with cols[2]:
-            src_badge = ' <span style="font-size:9px;color:#3a3a55;background:#12121e;padding:1px 5px;border-radius:3px;border:1px solid #2a2a40;">CardMarket</span>' if row.get("price_source") == "cardmarket" else ""
-            st.markdown(f"""
-            <div style="padding: 4px 0;">
-                <div class="cell-name">{row["name"]}{src_badge}</div>
-                <div class="cell-sub">{row["set"]} · {row["rarity"]}</div>
+        avg1  = row.get("cm_avg1",  0) or 0
+        avg7  = row.get("cm_avg7",  0) or 0
+        avg30 = row.get("cm_avg30", 0) or 0
+        spark_svg = make_sparkline(avg1, avg7, avg30, width=90, height=28)
+        if spark_svg and avg1 > 0 and avg30 > 0:
+            pct_chg   = (avg1 - avg30) / avg30 * 100
+            chg_color = "#00c853" if pct_chg >= 0 else "#ff4444"
+            sign      = "+" if pct_chg >= 0 else ""
+            chg_label = (f'<div style="font-size:9px;color:{chg_color};text-align:center;'
+                         f'margin-top:1px;line-height:1;">{sign}{pct_chg:.1f}% 30j</div>')
+        else:
+            spark_svg = ""
+            chg_label = ""
+
+        dp        = row["demand_pct"]
+        bar_w     = int(dp * 100)
+        dem_color = "#d4a017" if dp >= 0.7 else ("#8888cc" if dp >= 0.4 else "#3a3a55")
+
+        sig = row["Signal"]
+        if sig == "gem":
+            sig_html = '<span class="sig-gem">SOUS-ÉV.</span>'
+        elif sig == "over":
+            sig_html = '<span class="sig-over">SUR-ÉV.</span>'
+        else:
+            sig_html = '<span class="sig-fair">JUSTE</span>'
+
+        vg = row["value_gap"]
+        if vg > 0.05:
+            vg_html = f'<span class="gap-pos">+{vg:.2f}</span>'
+        elif vg < -0.05:
+            vg_html = f'<span class="gap-neg">{vg:.2f}</span>'
+        else:
+            vg_html = f'<span class="gap-neu">{vg:.2f}</span>'
+
+        img_url = row.get("image_url","")
+        img_html = (f'<img src="{img_url}" style="height:52px;width:auto;border-radius:4px;'
+                    f'object-fit:contain;display:block;">') if img_url else \
+                   '<div style="width:38px;height:52px;background:#12121e;border-radius:4px;"></div>'
+
+        # ── single flex row ─────────────────────────────────────────────────
+        st.markdown(f"""
+        <div style="display:flex;align-items:center;height:{ROW_H}px;gap:0;padding:0 4px;">
+
+          <!-- rank -->
+          <div style="width:28px;flex-shrink:0;text-align:center;font-size:12px;
+                      font-weight:700;color:{rank_color};">{rank}</div>
+
+          <!-- image -->
+          <div style="width:44px;flex-shrink:0;display:flex;align-items:center;
+                      justify-content:center;">{img_html}</div>
+
+          <!-- name + set -->
+          <div style="flex:2.2;padding:0 10px;min-width:0;overflow:hidden;">
+            <div class="cell-name" style="white-space:nowrap;overflow:hidden;
+                 text-overflow:ellipsis;">{row["name"]} {src_badge}</div>
+            <div class="cell-sub" style="white-space:nowrap;overflow:hidden;
+                 text-overflow:ellipsis;">{row["set"]} · {row["rarity"]}</div>
+          </div>
+
+          <!-- sparkline -->
+          <div style="flex:1.5;display:flex;flex-direction:column;align-items:center;
+                      justify-content:center;">
+            {spark_svg}
+            {chg_label}
+          </div>
+
+          <!-- prix -->
+          <div style="flex:1;text-align:right;padding-right:12px;">
+            <span class="cell-num price">C${row["market_price"]:.2f}</span>
+          </div>
+
+          <!-- demande -->
+          <div style="flex:1;padding-right:8px;">
+            <div class="demand-pct" style="color:{dem_color};">{int(dp*100)}%</div>
+            <div class="demand-bar">
+              <div class="demand-fill" style="width:{bar_w}%;background:{dem_color};"></div>
             </div>
-            """, unsafe_allow_html=True)
+          </div>
 
-        # Sparkline — colonne dédiée entre info et prix
-        with cols[3]:
-            avg1  = row.get("cm_avg1", 0) or 0
-            avg7  = row.get("cm_avg7", 0) or 0
-            avg30 = row.get("cm_avg30", 0) or 0
-            spark_svg = make_sparkline(avg1, avg7, avg30, width=100, height=32)
-            if spark_svg and avg1 > 0 and avg30 > 0:
-                pct_chg   = (avg1 - avg30) / avg30 * 100
-                chg_color = "#00c853" if pct_chg >= 0 else "#ff4444"
-                sign      = "+" if pct_chg >= 0 else ""
-                chg_label = f'<div style="font-size:9px;color:{chg_color};text-align:center;margin-top:2px;">{sign}{pct_chg:.1f}% 30j</div>'
-            else:
-                chg_label = ""
-            st.markdown(
-                f'<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding-top:6px;">' +
-                (spark_svg if spark_svg else '<div style="height:32px;"></div>') +
-                chg_label +
-                '</div>',
-                unsafe_allow_html=True
-            )
+          <!-- signal -->
+          <div style="flex:1;text-align:center;">{sig_html}</div>
 
-        # Prix
-        with cols[4]:
-            st.markdown(f'<div class="cell-num price" style="padding-top:8px;">C${row["market_price"]:.2f}</div>', unsafe_allow_html=True)
+          <!-- potentiel -->
+          <div style="flex:1;text-align:right;">{vg_html}</div>
 
-        # Demande
-        with cols[5]:
-            dp = row["demand_pct"]
-            bar_w = int(dp * 100)
-            color = "#d4a017" if dp >= 0.7 else ("#8888cc" if dp >= 0.4 else "#3a3a55")
-            st.markdown(f"""
-            <div style="padding-top:6px;">
-                <div class="demand-pct" style="color:{color};">{int(dp*100)}%</div>
-                <div class="demand-bar"><div class="demand-fill" style="width:{bar_w}%;background:{color};"></div></div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        # Signal
-        with cols[6]:
-            sig = row["Signal"]
-            if sig == "gem":
-                badge = '<span class="sig-gem">SOUS-ÉV.</span>'
-            elif sig == "over":
-                badge = '<span class="sig-over">SUR-ÉV.</span>'
-            else:
-                badge = '<span class="sig-fair">JUSTE</span>'
-            st.markdown(f'<div style="padding-top:8px;text-align:center;">{badge}</div>', unsafe_allow_html=True)
-
-        # Value Gap
-        with cols[7]:
-            vg = row["value_gap"]
-            if vg > 0.05:
-                vg_html = f'<span class="gap-pos">+{vg:.2f}</span>'
-            elif vg < -0.05:
-                vg_html = f'<span class="gap-neg">{vg:.2f}</span>'
-            else:
-                vg_html = f'<span class="gap-neu">{vg:.2f}</span>'
-            st.markdown(f'<div style="padding-top:8px;text-align:right;">{vg_html}</div>', unsafe_allow_html=True)
-
-        st.markdown('<hr style="margin:2px 0;">', unsafe_allow_html=True)
+        </div>
+        <hr style="margin:0;border-color:#1a1a2e;">
+        """, unsafe_allow_html=True)
 
     # ── LOAD MORE ─────────────────────────────────────────────────────────────
     if limit < total:
