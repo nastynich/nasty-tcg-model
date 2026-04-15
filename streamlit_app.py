@@ -874,6 +874,7 @@ def main():
         ("",           None,         ""),
         ("",           None,         ""),
         ("Carte",      None,         ""),
+        ("",           None,         ""),
         ("Prix C$",    "market_price","th-right"),
         ("Demande",    "demand_pct",  "th-right"),
         ("Signal",     "signal_sort", "th-center"),
@@ -881,7 +882,7 @@ def main():
     ]
 
     # Build header as columns
-    col_widths = [0.4, 0.7, 3, 1, 1, 1, 1]
+    col_widths = [0.4, 0.7, 2.2, 1.5, 1, 1, 1, 1]
     header_cols = st.columns(col_widths)
 
     sort_labels = {
@@ -927,38 +928,43 @@ def main():
             else:
                 st.markdown('<div style="width:64px;height:89px;background:#12121e;border-radius:6px;"></div>', unsafe_allow_html=True)
 
-        # Info + sparkline
+        # Info (nom + set + rareté seulement)
         with cols[2]:
             src_badge = ' <span style="font-size:9px;color:#3a3a55;background:#12121e;padding:1px 5px;border-radius:3px;border:1px solid #2a2a40;">CardMarket</span>' if row.get("price_source") == "cardmarket" else ""
-            spark_svg = make_sparkline(
-                row.get("cm_avg1", 0) or 0,
-                row.get("cm_avg7", 0) or 0,
-                row.get("cm_avg30", 0) or 0,
-            )
-            spark_html = f'<span style="margin-left:8px;">{spark_svg}</span>' if spark_svg else ""
-            # avg1 vs avg30 label
-            avg1  = row.get("cm_avg1", 0) or 0
-            avg30 = row.get("cm_avg30", 0) or 0
-            if avg1 > 0 and avg30 > 0:
-                pct_chg = (avg1 - avg30) / avg30 * 100
-                chg_color = "#00c853" if pct_chg >= 0 else "#ff4444"
-                chg_label = f'<span style="font-size:9px;color:{chg_color};margin-left:4px;">{"+" if pct_chg>=0 else ""}{pct_chg:.1f}% 30j</span>'
-            else:
-                chg_label = ""
             st.markdown(f"""
             <div style="padding: 4px 0;">
                 <div class="cell-name">{row["name"]}{src_badge}</div>
                 <div class="cell-sub">{row["set"]} · {row["rarity"]}</div>
-                <div style="display:flex;align-items:center;margin-top:4px;">{spark_html}{chg_label}</div>
             </div>
             """, unsafe_allow_html=True)
 
-        # Prix
+        # Sparkline — colonne dédiée entre info et prix
         with cols[3]:
+            avg1  = row.get("cm_avg1", 0) or 0
+            avg7  = row.get("cm_avg7", 0) or 0
+            avg30 = row.get("cm_avg30", 0) or 0
+            spark_svg = make_sparkline(avg1, avg7, avg30, width=100, height=32)
+            if spark_svg and avg1 > 0 and avg30 > 0:
+                pct_chg   = (avg1 - avg30) / avg30 * 100
+                chg_color = "#00c853" if pct_chg >= 0 else "#ff4444"
+                sign      = "+" if pct_chg >= 0 else ""
+                chg_label = f'<div style="font-size:9px;color:{chg_color};text-align:center;margin-top:2px;">{sign}{pct_chg:.1f}% 30j</div>'
+            else:
+                chg_label = ""
+            st.markdown(
+                f'<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding-top:6px;">' +
+                (spark_svg if spark_svg else '<div style="height:32px;"></div>') +
+                chg_label +
+                '</div>',
+                unsafe_allow_html=True
+            )
+
+        # Prix
+        with cols[4]:
             st.markdown(f'<div class="cell-num price" style="padding-top:8px;">C${row["market_price"]:.2f}</div>', unsafe_allow_html=True)
 
         # Demande
-        with cols[4]:
+        with cols[5]:
             dp = row["demand_pct"]
             bar_w = int(dp * 100)
             color = "#d4a017" if dp >= 0.7 else ("#8888cc" if dp >= 0.4 else "#3a3a55")
@@ -970,7 +976,7 @@ def main():
             """, unsafe_allow_html=True)
 
         # Signal
-        with cols[5]:
+        with cols[6]:
             sig = row["Signal"]
             if sig == "gem":
                 badge = '<span class="sig-gem">SOUS-ÉV.</span>'
@@ -981,7 +987,7 @@ def main():
             st.markdown(f'<div style="padding-top:8px;text-align:center;">{badge}</div>', unsafe_allow_html=True)
 
         # Value Gap
-        with cols[6]:
+        with cols[7]:
             vg = row["value_gap"]
             if vg > 0.05:
                 vg_html = f'<span class="gap-pos">+{vg:.2f}</span>'
