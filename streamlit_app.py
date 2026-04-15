@@ -489,9 +489,9 @@ def pokeid_to_tcgdex(sid):
     return mapping.get(sid, sid)
 
 @st.cache_data(ttl=21600, show_spinner=False)
-def fetch_data(_v=26):
+def fetch_data(_v=27):
     rows, seen, page = [], set(), 1
-    MAX_PAGES = 12  # safety cap — ~3000 cards max
+    MAX_PAGES = 20  # safety cap — ~5000 cards max
     while page <= MAX_PAGES:
         try:
             r = requests.get(
@@ -704,32 +704,43 @@ def run_screener(df: pd.DataFrame):
 
 
 def make_sparkline(avg1, avg7, avg30, width=80, height=28):
-    """Génère un sparkline SVG inline à partir des prix CardMarket avg1/avg7/avg30."""
+    """Génère un sparkline SVG inline. Retourne une ligne plate grise si pas de données."""
+    uid = abs(hash((avg1, avg7, avg30))) % 99999  # unique gradient id per card
     points = [avg30, avg7, avg1]
-    if not any(points) or all(p == 0 for p in points):
-        return ""
-    valid = [p for p in points if p and p > 0]
+    valid  = [p for p in points if p and p > 0]
+
+    # flat grey line if not enough data
     if len(valid) < 2:
-        return ""
+        mid_y = height // 2
+        svg = (
+            f'<svg width="100%" height="{height}" viewBox="0 0 {width} {height}" '
+            f'xmlns="http://www.w3.org/2000/svg">'
+            f'<line x1="0" y1="{mid_y}" x2="{width}" y2="{mid_y}" '
+            f'stroke="#2a2a40" stroke-width="1.5" stroke-dasharray="3,3"/>'
+            f'</svg>'
+        )
+        return svg
+
     mn, mx = min(valid), max(valid)
+    xs = [0, width // 2, width]
     if mx == mn:
-        return ""
-    # normalize to SVG coords
-    xs = [5, width // 2, width - 5]
-    ys = [height - 4 - int((p - mn) / (mx - mn) * (height - 8)) if p and p > 0 else height // 2 for p in points]
-    pts = " ".join(f"{x},{y}" for x, y in zip(xs, ys))
-    color = "#00c853" if avg1 >= avg30 else "#ff4444"
-    # fill polygon
-    fill_pts = f"5,{height} " + pts + f" {width-5},{height}"
+        # flat line at mid height — still color it
+        ys = [height // 2, height // 2, height // 2]
+    else:
+        ys = [height - 2 - int((p - mn) / (mx - mn) * (height - 4)) if p and p > 0 else height // 2 for p in points]
+
+    pts      = " ".join(f"{x},{y}" for x, y in zip(xs, ys))
+    color    = "#00c853" if avg1 >= avg30 else "#ff4444"
+    fill_pts = f"0,{height} " + pts + f" {width},{height}"
     svg = (
         f'<svg width="100%" height="{height}" viewBox="0 0 {width} {height}" '
-        f'xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;">'
-        f'<defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">'
-        f'<stop offset="0%" stop-color="{color}" stop-opacity="0.3"/>'
+        f'xmlns="http://www.w3.org/2000/svg">'
+        f'<defs><linearGradient id="sg{uid}" x1="0" y1="0" x2="0" y2="1">'
+        f'<stop offset="0%" stop-color="{color}" stop-opacity="0.35"/>'
         f'<stop offset="100%" stop-color="{color}" stop-opacity="0.0"/></linearGradient></defs>'
-        f'<polygon points="{fill_pts}" fill="url(#sg)"/>'
-        f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>'
-        f'<circle cx="{xs[-1]}" cy="{ys[-1]}" r="2.5" fill="{color}"/>'
+        f'<polygon points="{fill_pts}" fill="url(#sg{uid})"/>'
+        f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>'
+        f'<circle cx="{xs[-1]}" cy="{ys[-1]}" r="3" fill="{color}"/>'
         f'</svg>'
     )
     return svg
@@ -779,7 +790,7 @@ def main():
 
     # ── LOAD DATA ─────────────────────────────────────────────────────────────
     with st.spinner("Chargement des cartes..."):
-        fetched = fetch_data(_v=26)
+        fetched = fetch_data(_v=27)
 
     if fetched.empty:
         st.error("Aucune carte chargée — vérifier la connexion API.")
@@ -933,14 +944,13 @@ def main():
         avg7  = row.get("cm_avg7",  0) or 0
         avg30 = row.get("cm_avg30", 0) or 0
         spark_svg = make_sparkline(avg1, avg7, avg30, width=140, height=30)
-        if spark_svg and avg1 > 0 and avg30 > 0:
+        if avg1 > 0 and avg30 > 0:
             pct_chg   = (avg1 - avg30) / avg30 * 100
             chg_color = "#00c853" if pct_chg >= 0 else "#ff4444"
             sign      = "+" if pct_chg >= 0 else ""
             chg_label = (f'<div style="font-size:9px;color:{chg_color};text-align:center;'
                          f'margin-top:1px;line-height:1;">{sign}{pct_chg:.1f}% 30j</div>')
         else:
-            spark_svg = ""
             chg_label = ""
 
         dp        = row["demand_pct"]
@@ -989,9 +999,9 @@ def main():
           </div>
 
           <!-- sparkline -->
-          <div style="flex:1.5;display:flex;flex-direction:column;align-items:center;
-                      justify-content:center;width:100%;padding:0 4px;">
-            <div style="width:100%;">{spark_svg}</div>
+          <div style="flex:2;display:flex;flex-direction:column;align-items:center;
+                      justify-content:center;min-width:0;padding:0;">
+            <div style="width:100%;line-height:0;">{spark_svg}</div>
             {chg_label}
           </div>
 
