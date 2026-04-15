@@ -722,7 +722,7 @@ def make_sparkline(avg1, avg7, avg30, width=80, height=28):
     # fill polygon
     fill_pts = f"5,{height} " + pts + f" {width-5},{height}"
     svg = (
-        f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+        f'<svg width="100%" height="{height}" viewBox="0 0 {width} {height}" '
         f'xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;">'
         f'<defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">'
         f'<stop offset="0%" stop-color="{color}" stop-opacity="0.3"/>'
@@ -932,7 +932,7 @@ def main():
         avg1  = row.get("cm_avg1",  0) or 0
         avg7  = row.get("cm_avg7",  0) or 0
         avg30 = row.get("cm_avg30", 0) or 0
-        spark_svg = make_sparkline(avg1, avg7, avg30, width=90, height=28)
+        spark_svg = make_sparkline(avg1, avg7, avg30, width=140, height=30)
         if spark_svg and avg1 > 0 and avg30 > 0:
             pct_chg   = (avg1 - avg30) / avg30 * 100
             chg_color = "#00c853" if pct_chg >= 0 else "#ff4444"
@@ -990,8 +990,8 @@ def main():
 
           <!-- sparkline -->
           <div style="flex:1.5;display:flex;flex-direction:column;align-items:center;
-                      justify-content:center;">
-            {spark_svg}
+                      justify-content:center;width:100%;padding:0 4px;">
+            <div style="width:100%;">{spark_svg}</div>
             {chg_label}
           </div>
 
