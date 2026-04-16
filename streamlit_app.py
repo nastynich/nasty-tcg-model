@@ -488,8 +488,8 @@ def pokeid_to_tcgdex(sid):
     }
     return mapping.get(sid, sid)
 
-@st.cache_data(ttl=21600, show_spinner=False)
-def fetch_data(_v=27):
+@st.cache_data(ttl=82800, show_spinner=False)  # 23h — date key forces daily refresh
+def fetch_data(_v=0):
     rows, seen, page = [], set(), 1
     MAX_PAGES = 20  # safety cap — ~5000 cards max
     while page <= MAX_PAGES:
@@ -790,7 +790,9 @@ def main():
 
     # ── LOAD DATA ─────────────────────────────────────────────────────────────
     with st.spinner("Chargement des cartes..."):
-        fetched = fetch_data(_v=27)
+        from datetime import date
+        today_key = int(date.today().strftime("%Y%m%d"))
+        fetched = fetch_data(_v=today_key)
 
     if fetched.empty:
         st.error("Aucune carte chargée — vérifier la connexion API.")
